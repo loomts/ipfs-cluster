@@ -9,8 +9,10 @@ import (
 	"io"
 	"mime/multipart"
 	"strings"
+	"sync"
 
 	"github.com/ipfs-cluster/ipfs-cluster/adder/ipfsadd"
+	"github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs/boxo/ipld/unixfs"
 	"github.com/ipld/go-car"
@@ -62,6 +64,10 @@ type ClusterDAGService interface {
 	// Allocations returns the allocations made by the cluster DAG service
 	// for the added content.
 	Allocations() []peer.ID
+
+	GetRS() *reedsolomon.ReedSolomon
+
+	SetParity(name string)
 }
 
 // A dagFormatter can create dags from files.Node. It can keep state
@@ -76,8 +82,8 @@ type Adder struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	dgs ClusterDAGService
-
+	dgs    ClusterDAGService
+	dgs2   ClusterDAGService
 	params api.AddParams
 
 	// AddedOutput updates are placed on this channel
@@ -107,6 +113,11 @@ func New(ds ClusterDAGService, p api.AddParams, out chan api.AddedOutput) *Adder
 		params: p,
 		output: out,
 	}
+}
+
+// SetDAGService2 sets the single DAGService for parity shards
+func (a *Adder) SetDAGService2(dgs ClusterDAGService) {
+	a.dgs2 = dgs
 }
 
 func (a *Adder) setContext(ctx context.Context) {
@@ -142,7 +153,48 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 
 	defer a.cancel()
 	defer close(a.output)
-
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	// concurrently, add parity as a single file
+	// TODO(loomt), add metadata for this file, such as rs-filename, it contain data shards and parity shards links
+	go func() {
+		var dagFmtr2 dagFormatter
+		var err error
+		defer wg.Done()
+		if a.params.Erasure {
+			// add parity shards
+			rs := a.dgs.GetRS()
+			parityCh := rs.GetParityCh()
+			switch a.params.Format {
+			case "", "unixfs":
+				dagFmtr2, err = newIpfsAdder(ctx, a.dgs2, a.params, a.output)
+			case "car":
+				dagFmtr2, err = newCarAdder(ctx, a.dgs2, a.params, a.output)
+			default:
+				err = errors.New("bad dag formatter option")
+			}
+			if err != nil {
+				logger.Errorf("error creating dag formatter: %s", err)
+			}
+			for {
+				parity := <-parityCh
+				pf := files.NewBytesFile(parity.RawData)
+				a.dgs2.SetParity(parity.Name)
+				parityRoot, err := dagFmtr2.Add(parity.Name, pf)
+				if err != nil {
+					logger.Error("error adding parity to cluster: ", err)
+				}
+				parityClusterRoot, err := a.dgs2.Finalize(a.ctx, parityRoot)
+				if err != nil {
+					logger.Error("error finalizing adder:", err)
+				}
+				logger.Infof("%s successfully added to cluster", parityClusterRoot)
+				if rs.ReceAllData() {
+					return
+				}
+			}
+		}
+	}()
 	var dagFmtr dagFormatter
 	var err error
 	switch a.params.Format {
@@ -196,6 +248,7 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 		return api.CidUndef, err
 	}
 	logger.Infof("%s successfully added to cluster", clusterRoot)
+	wg.Wait()
 	return clusterRoot, nil
 }
 

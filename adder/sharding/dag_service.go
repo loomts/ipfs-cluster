@@ -10,6 +10,7 @@ import (
 
 	"time"
 
+	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/adder"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
@@ -48,6 +49,9 @@ type DAGService struct {
 
 	startTime time.Time
 	totalSize uint64
+
+	// erasure coding
+	rs *rs.ReedSolomon
 }
 
 // New returns a new ClusterDAGService, which uses the given rpc client to perform
@@ -63,7 +67,14 @@ func New(ctx context.Context, rpc *rpc.Client, opts api.AddParams, out chan<- ap
 		addedSet:  cid.NewSet(),
 		shards:    make(map[string]cid.Cid),
 		startTime: time.Now(),
+		rs:        rs.New(ctx, rs.DefaultDataShards, rs.DefaultParityShards, int(opts.ShardSize)),
 	}
+}
+
+// Get, TODO, when erasure enabled, and data shard lose, should find parity and reconstruct.
+func (dgs *DAGService) Get(ctx context.Context, key cid.Cid) (ipld.Node, error) {
+
+	return nil, nil
 }
 
 // Add puts the given node in its corresponding shard and sends it to the
@@ -92,6 +103,9 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	lastCid, err := dgs.flushCurrentShard(ctx)
 	if err != nil {
 		return api.NewCid(lastCid), err
+	}
+	if dgs.addParams.Erasure {
+		dgs.rs.HandleBlock(nil, api.CidUndef) // send the last block of this file
 	}
 
 	if !lastCid.Equals(dataRoot.Cid) {
@@ -207,7 +221,7 @@ func (dgs *DAGService) ingestBlock(ctx context.Context, n ipld.Node) error {
 		logger.Infof("new shard for '%s': #%d", dgs.addParams.Name, len(dgs.shards))
 		var err error
 		// important: shards use the DAGService context.
-		shard, err = newShard(dgs.ctx, ctx, dgs.rpcClient, dgs.addParams.PinOptions)
+		shard, err = newShard(dgs.ctx, ctx, dgs.rpcClient, dgs.addParams.PinOptions, len(dgs.shards), dgs.addParams.Erasure)
 		if err != nil {
 			return err
 		}
@@ -218,7 +232,9 @@ func (dgs *DAGService) ingestBlock(ctx context.Context, n ipld.Node) error {
 
 	// this is not same as n.Size()
 	size := uint64(len(n.RawData()))
-
+	if dgs.addParams.Erasure {
+		dgs.rs.HandleBlock(n.RawData(), api.CidUndef) // blocks do not need cid
+	}
 	// add the block to it if it fits and return
 	if shard.Size()+size < shard.Limit() {
 		shard.AddLink(ctx, n.Cid(), size)
@@ -294,7 +310,11 @@ func (dgs *DAGService) flushCurrentShard(ctx context.Context) (cid.Cid, error) {
 
 	lens := len(dgs.shards)
 
-	shardCid, err := shard.Flush(ctx, lens, dgs.previousShard)
+	shardCid, endBlock, err := shard.Flush(ctx, lens, dgs.previousShard)
+	// end of shard
+	if dgs.addParams.Erasure {
+		dgs.rs.HandleBlock(endBlock, api.NewCid(shardCid)) // blocks do not need cid
+	}
 	if err != nil {
 		return shardCid, err
 	}
@@ -321,4 +341,11 @@ func (dgs *DAGService) AddMany(ctx context.Context, nodes []ipld.Node) error {
 		}
 	}
 	return nil
+}
+
+func (dgs *DAGService) GetRS() *rs.ReedSolomon {
+	return dgs.rs
+}
+
+func (dgs *DAGService) SetParity(name string) {
 }

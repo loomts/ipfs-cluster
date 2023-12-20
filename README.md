@@ -1,5 +1,21 @@
-# IPFS Cluster
+## IPFS Cluster(Erasure Coding Support)
+### Warning
+1. This project is in progress.
+2. Change the `Cluster.Pin` RPC promission to RPCTrusted in order to Pin Peers.
 
+### Motivation
+IPFS-Cluster is a good project for data orchestration on IPFS. But it unsupport erasure coding, which means that we should use multiple memory to fault tolerance. But it can be solve by adding a [Reed-Solomon]() layer. But Unforunterly, there is also something wrong with IFPS-Cluster sharding, see [discuss](https://discuss.ipfs.tech/t/ipfs-cluster-sharding-and-recursive-partial-pin/8035).
+
+### Overview
+
+This work can be devide into three part.
+1. Add, figure out how to obtain data. Because data can only be accessed once, we can only get the blocks data. So I also send blocks to Reed-Solomon when send to IPFS, When the Reed-Solomon module receive 6 data shards(configable) it will generate 3 parity shards and send them to `adder`. While adder receive parity shards, it will use single/dag_service add them to IPFS.
+2. Allocate, descide which shard send to which node. The implementation make more peers store the data shards, and more than one peer store the parity shards. See `ShardAllocate` for details. After figure who to store the shard, then use RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to **remote** or local Pin. So I open the `RPCTrusted` promission for `Cluster.Pin`.
+3. Get, Working in progress.
+
+
+
+---
 [![Made by](https://img.shields.io/badge/By-Protocol%20Labs-000000.svg?style=flat-square)](https://protocol.ai)
 [![Main project](https://img.shields.io/badge/project-ipfs--cluster-ef5c43.svg?style=flat-square)](http://github.com/ipfs-cluster)
 [![Discord](https://img.shields.io/badge/forum-discuss.ipfs.io-f9a035.svg?style=flat-square)](https://discuss.ipfs.io/c/help/help-ipfs-cluster/24)

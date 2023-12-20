@@ -3,6 +3,7 @@ package adder
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
@@ -128,6 +129,51 @@ func BlockAllocate(ctx context.Context, rpc *rpc.Client, pinOpts api.PinOptions)
 		&allocsStr,
 	)
 	return allocsStr, err
+}
+
+// ShardAllocate choose one peer to send shard
+func ShardAllocate(peers []peer.ID, dataShards int, parityShards int, idx int, isData bool) (peer.ID, error) {
+	if len(peers) == 0 {
+		return "", errors.New("no peers")
+	}
+	if len(peers) == 1 {
+		return peers[0], nil
+	}
+	// Sort peers to ensure consistent allocation
+	sort.Slice(peers, func(i, j int) bool {
+		return peers[i].String() < peers[j].String()
+	})
+
+	// dataPeers is the number of peers who store data shard, hopefully more than the number of parity peers.
+	var dataPeers int
+	if dataShards*len(peers)%(dataShards+parityShards) == 0 {
+		dataPeers = dataShards * len(peers) / (dataShards + parityShards)
+	} else {
+		dataPeers = 1 + int(dataShards*len(peers)/(dataShards+parityShards))
+		if len(peers)-1 < 1+int(dataShards*len(peers)/(dataShards+parityShards)) {
+			dataPeers = len(peers) - 1
+		}
+	}
+	parityPeers := len(peers) - dataPeers
+	if isData {
+		return peers[idx%dataPeers], nil
+	} else {
+		return peers[dataPeers+idx%parityPeers], nil
+	}
+}
+
+// ErasurePin helps sending local and remote RPC pin requests.(by setting dest and enable the promission of RPC Call)
+func ErasurePin(ctx context.Context, rpc *rpc.Client, pin api.Pin) error {
+	logger.Debugf("adder pinning %+v", pin)
+	var pinResp api.Pin
+	return rpc.CallContext(
+		ctx,
+		pin.Allocations[0], // use only one peer to pin
+		"Cluster",
+		"Pin",
+		pin,
+		&pinResp,
+	)
 }
 
 // Pin helps sending local RPC pin requests.

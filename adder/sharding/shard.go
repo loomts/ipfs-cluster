@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/ipfs-cluster/ipfs-cluster/adder"
+	"github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	ipld "github.com/ipfs/go-ipld-format"
 
@@ -32,10 +33,19 @@ type shard struct {
 	dagNode     map[string]cid.Cid
 	currentSize uint64
 	sizeLimit   uint64
+	erasure     bool
 }
 
-func newShard(globalCtx context.Context, ctx context.Context, rpc *rpc.Client, opts api.PinOptions) (*shard, error) {
+func newShard(globalCtx context.Context, ctx context.Context, rpc *rpc.Client, opts api.PinOptions, idx int, erasure bool) (*shard, error) {
 	allocs, err := adder.BlockAllocate(ctx, rpc, opts)
+	if erasure {
+		// select one peer to send shard
+		allocation, err := adder.ShardAllocate(allocs, reedsolomon.DefaultDataShards, reedsolomon.DefaultParityShards, idx, true)
+		if err != nil {
+			return nil, fmt.Errorf("shardsAllocate %d: %s", idx, err)
+		}
+		allocs = []peer.ID{allocation}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +74,7 @@ func newShard(globalCtx context.Context, ctx context.Context, rpc *rpc.Client, o
 		dagNode:     make(map[string]cid.Cid),
 		currentSize: 0,
 		sizeLimit:   opts.ShardSize,
+		erasure:     erasure,
 	}, nil
 }
 
@@ -106,18 +117,20 @@ func (sh *shard) Close() error {
 // Flush completes the allocation of this shard by building a CBOR node
 // and adding it to IPFS, then pinning it in cluster. It returns the Cid of the
 // shard.
-func (sh *shard) Flush(ctx context.Context, shardN int, prev cid.Cid) (cid.Cid, error) {
+func (sh *shard) Flush(ctx context.Context, shardN int, prev cid.Cid) (cid.Cid, []byte, error) {
+	var endBlock []byte
 	logger.Debugf("shard %d: flush", shardN)
 	nodes, err := makeDAG(ctx, sh.dagNode)
 	if err != nil {
-		return cid.Undef, err
+		return cid.Undef, []byte{}, err
 	}
 
 	for _, n := range nodes {
+		endBlock = append(endBlock, n.RawData()...)
 		err = sh.sendBlock(ctx, n)
 		if err != nil {
 			close(sh.blocks)
-			return cid.Undef, err
+			return cid.Undef, []byte{}, err
 		}
 	}
 
@@ -125,12 +138,12 @@ func (sh *shard) Flush(ctx context.Context, shardN int, prev cid.Cid) (cid.Cid, 
 
 	select {
 	case <-ctx.Done():
-		return cid.Undef, ctx.Err()
+		return cid.Undef, []byte{}, ctx.Err()
 	case <-sh.bs.Done():
 	}
 
 	if err := sh.bs.Err(); err != nil {
-		return cid.Undef, err
+		return cid.Undef, []byte{}, err
 	}
 
 	rootCid := nodes[0].Cid()
@@ -153,8 +166,13 @@ func (sh *shard) Flush(ctx context.Context, shardN int, prev cid.Cid) (cid.Cid, 
 		humanize.Bytes(sh.Size()),
 		len(sh.dagNode),
 	)
-
-	return rootCid, adder.Pin(ctx, sh.rpc, pin)
+	if sh.erasure {
+		pin.ReplicationFactorMin = 1
+		pin.ReplicationFactorMax = 1
+		return rootCid, endBlock, adder.ErasurePin(ctx, sh.rpc, pin)
+	} else {
+		return rootCid, []byte{}, adder.Pin(ctx, sh.rpc, pin)
+	}
 }
 
 // Size returns this shard's current size.

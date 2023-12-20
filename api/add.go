@@ -48,7 +48,7 @@ type AddParams struct {
 	StreamChannels bool
 	Format         string // selects with adder
 	NoPin          bool
-
+	Erasure        bool
 	IPFSAddParams
 }
 

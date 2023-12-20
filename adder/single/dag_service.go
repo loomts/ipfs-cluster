@@ -4,8 +4,12 @@ package single
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
+	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	adder "github.com/ipfs-cluster/ipfs-cluster/adder"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
@@ -36,6 +40,7 @@ type DAGService struct {
 	blocks          chan api.NodeWithMeta
 	closeBlocksOnce sync.Once
 	recentBlocks    *recentBlocks
+	parityIdx       int // parity index, only used  when enable erasure coding
 }
 
 // New returns a new Adder with the given rpc Client. The client is used
@@ -83,6 +88,14 @@ func (dgs *DAGService) Add(ctx context.Context, node ipld.Node) error {
 			}
 		}
 
+		if dgs.addParams.Erasure {
+			// this sets allocations as single peer
+			allocation, err := adder.ShardAllocate(dests, rs.DefaultDataShards, rs.DefaultParityShards, dgs.parityIdx, false)
+			if err != nil {
+				return fmt.Errorf("parity shard allocation %d: %s", dgs.parityIdx, err)
+			}
+			dests = []peer.ID{allocation}
+		}
 		dgs.dests = dests
 
 		if dgs.local {
@@ -145,12 +158,19 @@ func (dgs *DAGService) Finalize(ctx context.Context, root api.Cid) (api.Cid, err
 	if dgs.addParams.NoPin {
 		return root, nil
 	}
-
 	// Cluster pin the result
 	rootPin := api.PinWithOpts(root, dgs.addParams.PinOptions)
 	rootPin.Allocations = dgs.dests
-
-	return root, adder.Pin(ctx, dgs.rpcClient, rootPin)
+	if dgs.addParams.Erasure {
+		rootPin.ReplicationFactorMax = 1
+		rootPin.ReplicationFactorMin = 1
+		// reflash block ch to reuse dag, is safe, because adderutils.go defer the close func of block ch
+		dgs.blocks = make(chan api.NodeWithMeta, 256)
+		dgs.closeBlocksOnce = sync.Once{}
+		return root, adder.ErasurePin(ctx, dgs.rpcClient, rootPin)
+	} else {
+		return root, adder.Pin(ctx, dgs.rpcClient, rootPin)
+	}
 }
 
 // Allocations returns the add destinations decided by the DAGService.
@@ -187,4 +207,15 @@ func (rc *recentBlocks) Add(n ipld.Node) {
 func (rc *recentBlocks) Has(n ipld.Node) bool {
 	c := n.Cid()
 	return rc.blocks[0].Equals(c) || rc.blocks[1].Equals(c)
+}
+
+func (dgs *DAGService) GetRS() *rs.ReedSolomon {
+	return nil // never use single dag_service to get rs
+}
+
+func (dgs *DAGService) SetParity(name string) {
+	idx, _ := strconv.Atoi(strings.Split(name, "-")[2]) // get parity index
+	dgs.addParams.Erasure = true
+	dgs.addParams.Name = name
+	dgs.parityIdx = idx
 }

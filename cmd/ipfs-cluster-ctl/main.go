@@ -312,6 +312,16 @@ Optional replication-min and replication-max factors can be provided: -1 means
 "pin everywhere" and 0 means use cluster's default setting (i.e., replication
 factor set in config). Positive values indicate how many peers should pin this
 content.
+
+***feat***
+Cluster Add supports handling huge files and sharding the resulting DAG among
+several ipfs daemons (--shard). In this case, a single ipfs daemon will not
+contain the full dag, but only parts of it (shards). Desired shard size can
+be provided with the --shard-size flag.
+
+We recommend setting a --name for sharded pins. Otherwise, it will be
+automatically generated.
+***feat***
 `,
 			/*
 				Cluster Add supports handling huge files and sharding the resulting DAG among
@@ -429,21 +439,20 @@ content.
 				},
 
 				// TODO: Uncomment when sharding is supported.
-				// cli.BoolFlag{
-				//	Name:  "shard",
-				//	Usage: "Break the file into pieces (shards) and distributed among peers",
-				// },
-				// cli.Uint64Flag{
-				//	Name:  "shard-size",
-				//	Value: defaultAddParams.ShardSize,
-				//	Usage: "Sets the maximum replication factor for pinning this file",
-				// },
-				// TODO: Figure progress over total bar.
-				// cli.BoolFlag{
+				cli.BoolFlag{
+					Name:  "shard",
+					Usage: "Break the file into pieces (shards) and distributed among peers",
+				},
+				cli.Uint64Flag{
+					Name:  "shard-size",
+					Value: defaultAddParams.ShardSize,
+					Usage: "Sets the maximum replication factor for pinning this file",
+				},
+				//TODO: Figure progress over total bar.
+				//cli.BoolFlag{
 				//	Name:  "progress, p",
 				//	Usage: "Stream progress data",
-				// },
-
+				//},
 			},
 			Action: func(c *cli.Context) error {
 				shard := c.Bool("shard")
@@ -484,9 +493,8 @@ content.
 				}
 				p.NoPin = c.Bool("no-pin")
 				p.Format = c.String("format")
-				//p.Shard = shard
-				//p.ShardSize = c.Uint64("shard-size")
-				p.Shard = false
+				p.Shard = shard
+				p.ShardSize = c.Uint64("shard-size")
 				p.Recursive = c.Bool("recursive")
 				p.Local = c.Bool("local")
 				p.Layout = c.String("layout")

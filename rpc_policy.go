@@ -18,7 +18,7 @@ var DefaultRPCPolicy = map[string]RPCEndpointType{
 	"Cluster.PeerRemove":           RPCTrusted,
 	"Cluster.Peers":                RPCTrusted, // Used by ConnectGraph()
 	"Cluster.PeersWithFilter":      RPCClosed,
-	"Cluster.Pin":                  RPCClosed,
+	"Cluster.Pin":                  RPCTrusted,
 	"Cluster.PinGet":               RPCClosed,
 	"Cluster.PinPath":              RPCClosed,
 	"Cluster.Pins":                 RPCClosed, // Used in stateless tracker, ipfsproxy, restapi

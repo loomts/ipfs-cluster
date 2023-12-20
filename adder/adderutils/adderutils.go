@@ -35,6 +35,7 @@ func AddMultipartHTTPHandler(
 	output := make(chan api.AddedOutput, 200)
 
 	if params.Shard {
+		params.Erasure = true
 		dags = sharding.New(ctx, rpc, params, output)
 	} else {
 		dags = single.New(ctx, rpc, params, params.Local)
@@ -68,6 +69,12 @@ func AddMultipartHTTPHandler(
 
 		enc := json.NewEncoder(w)
 		add := adder.New(dags, params, output)
+		if params.Erasure {
+			dgs2 := single.New(ctx, rpc, params, false)
+			add.SetDAGService2(dgs2)
+			defer dgs2.Close()
+		}
+
 		root, err := add.FromMultipart(ctx, reader)
 		if err != nil { // Send an error
 			logger.Error(err)
@@ -102,6 +109,11 @@ func AddMultipartHTTPHandler(
 		streamOutput(w, output, outputTransform)
 	}()
 	add := adder.New(dags, params, output)
+	if params.Erasure {
+		dgs2 := single.New(ctx, rpc, params, false)
+		add.SetDAGService2(dgs2)
+		defer dgs2.Close()
+	}
 	root, err := add.FromMultipart(ctx, reader)
 	if err != nil {
 		logger.Error(err)

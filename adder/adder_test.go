@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/test"
 	"github.com/ipld/go-car"
@@ -42,6 +43,11 @@ func (dag *mockCDAGServ) Finalize(ctx context.Context, root api.Cid) (api.Cid, e
 
 func (dag *mockCDAGServ) Allocations() []peer.ID {
 	return nil
+}
+func (dgs *mockCDAGServ) GetRS() *rs.ReedSolomon {
+	return nil
+}
+func (dgs *mockCDAGServ) SetParity(name string) {
 }
 
 func TestAdder(t *testing.T) {
