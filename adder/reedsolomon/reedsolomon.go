@@ -17,6 +17,7 @@ import (
 	"unsafe"
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
+
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/templexxx/reedsolomon"
 )
@@ -42,7 +43,6 @@ type ReedSolomon struct {
 	shardSize    int
 	parityLen    int
 	parityCh     chan ParityShard
-	remainShards int
 	receAllData  bool
 }
 
@@ -69,9 +69,8 @@ func New(ctx context.Context, d int, p int, shardSize int) *ReedSolomon {
 		parityShards: p,
 		curShardI:    0,
 		curShardJ:    0,
-		parityCh:     make(chan ParityShard, 1024),
+		parityCh:     make(chan ParityShard),
 		parityLen:    0,
-		remainShards: 0,
 		receAllData:  false,
 	}
 }
@@ -92,7 +91,6 @@ func (rs *ReedSolomon) Encode(isLast bool) {
 		return
 	}
 	rs.align()
-	rs.remainShards += rs.parityShards
 	err := rs.rs.Encode(rs.blocks)
 	if err != nil {
 		log.Errorf("reedsolomon encode error:%v", err)
@@ -102,14 +100,12 @@ func (rs *ReedSolomon) Encode(isLast bool) {
 		// make a new slice to copy b and send out
 		out := make([]byte, len(b))
 		copy(out, b)
-		log.Infof("reedsolomon encode %s", fmt.Sprintf("parity-shard-%d", rs.parityLen))
 		rs.parityCh <- ParityShard{
 			RawData: out,
 			Name:    fmt.Sprintf("parity-shard-%d", rs.parityLen),
 			Links:   rs.s2c,
 		}
 		rs.parityLen += 1
-		rs.remainShards -= 1
 	}
 	if isLast {
 		close(rs.parityCh)
@@ -155,8 +151,4 @@ func (rs *ReedSolomon) align() {
 	CBytes := (*[1 << 30]byte)(unsafe.Pointer(&rs.blocks[rs.curShardI][rs.curShardJ]))[: rs.shardSize-rs.curShardJ : rs.shardSize-rs.curShardJ]
 	CBytes = bytes.Repeat([]byte{0}, len(CBytes))
 	rs.curShardI, rs.curShardJ = 0, 0
-}
-
-func (rs *ReedSolomon) ReceAllData() bool {
-	return rs.receAllData == true && rs.remainShards == 0 && len(rs.parityCh) == 0
 }

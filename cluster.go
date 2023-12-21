@@ -1374,6 +1374,8 @@ func (c *Cluster) PinGet(ctx context.Context, h api.Cid) (api.Pin, error) {
 	if err != nil {
 		return api.Pin{}, err
 	}
+	fmt.Println("======================================PinGet======================================")
+	fmt.Printf("cid: %v, allocation:%v, name:%v, metadata:%v\n",pin.Cid,pin.Allocations,pin.Name,pin.Metadata)
 	return pin, nil
 }
 
@@ -2278,4 +2280,10 @@ func (c *Cluster) RepoGCLocal(ctx context.Context) (api.RepoGC, error) {
 	resp.Peer = c.id
 	resp.Peername = c.config.Peername
 	return resp, nil
+}
+
+func (c *Cluster) ECGet(ctx context.Context, cid api.Cid) error {
+	ctx, span := trace.StartSpan(ctx, "cluster/ECGet")
+	defer span.End()
+	return nil
 }

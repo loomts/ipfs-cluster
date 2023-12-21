@@ -79,6 +79,8 @@ type Client interface {
 	// Allocation returns the current allocations for a given Cid.
 	Allocation(ctx context.Context, ci api.Cid) (api.Pin, error)
 
+	// ECGet download the erasure coding file of given cid
+	ECGet(ctx context.Context, ci api.Cid) error
 	// Status returns the current ipfs state for a given Cid. If local is true,
 	// the information affects only the current peer, otherwise the information
 	// is fetched from all cluster peers.

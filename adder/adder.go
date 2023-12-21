@@ -178,6 +178,9 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 			}
 			for {
 				parity := <-parityCh
+				if parity.Name == "" {
+					return
+				}
 				pf := files.NewBytesFile(parity.RawData)
 				a.dgs2.SetParity(parity.Name)
 				parityRoot, err := dagFmtr2.Add(parity.Name, pf)
@@ -189,9 +192,6 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 					logger.Error("error finalizing adder:", err)
 				}
 				logger.Infof("%s successfully added to cluster", parityClusterRoot)
-				if rs.ReceAllData() {
-					return
-				}
 			}
 		}
 	}()

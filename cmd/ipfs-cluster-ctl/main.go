@@ -285,6 +285,29 @@ cluster peers.
 			},
 		},
 		{
+			Name:      "ecget",
+			Usage:     "Get a file or directory from ipfs-cluster(only support Erasure Coding file)",
+			ArgsUsage: "<CID>",
+			Description: `
+You can use IPFS get instead of IPFS-Cluster if you do not use Erasure Coding.
+This command will download the file from peers and reconstruct it locally 
+then check the integrity of the file and return.
+`,
+			Flags: []cli.Flag{},
+			Action: func(c *cli.Context) error {
+				cidStr := c.Args().First()
+				if cidStr != "" {
+					ci, err := api.DecodeCid(cidStr)
+					checkErr("parsing cid", err)
+					cerr := globalClient.ECGet(ctx, ci)
+					checkErr("ecget", cerr)
+				} else {
+					checkErr("", errors.New("need a cid"))
+				}
+				return nil
+			},
+		},
+		{
 			Name:      "add",
 			Usage:     "Add a file or directory to ipfs and pin it in the cluster",
 			ArgsUsage: "<path>",

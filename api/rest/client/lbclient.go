@@ -564,3 +564,13 @@ func (lc *loadBalancingClient) Health(ctx context.Context) error {
 	err := lc.retry(0, call)
 	return err
 }
+
+func (lc *loadBalancingClient) ECGet(ctx context.Context, cid api.Cid) error {
+	call := func(c Client) error {
+		err := c.ECGet(ctx, cid)
+		return err
+	}
+	err := lc.retry(0, call)
+
+	return err
+}
