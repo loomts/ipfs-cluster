@@ -571,6 +571,5 @@ func (lc *loadBalancingClient) ECGet(ctx context.Context, cid api.Cid) error {
 		return err
 	}
 	err := lc.retry(0, call)
-
 	return err
 }

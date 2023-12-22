@@ -10,16 +10,16 @@ import (
 
 	"time"
 
-	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/adder"
+	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
 	humanize "github.com/dustin/go-humanize"
 	cid "github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log/v2"
-	peer "github.com/libp2p/go-libp2p/core/peer"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
+	peer "github.com/libp2p/go-libp2p/core/peer"
 )
 
 var logger = logging.Logger("shardingdags")
@@ -69,12 +69,6 @@ func New(ctx context.Context, rpc *rpc.Client, opts api.AddParams, out chan<- ap
 		startTime: time.Now(),
 		rs:        rs.New(ctx, rs.DefaultDataShards, rs.DefaultParityShards, int(opts.ShardSize)),
 	}
-}
-
-// Get, TODO, when erasure enabled, and data shard lose, should find parity and reconstruct.
-func (dgs *DAGService) Get(ctx context.Context, key cid.Cid) (ipld.Node, error) {
-
-	return nil, nil
 }
 
 // Add puts the given node in its corresponding shard and sends it to the

@@ -14,7 +14,6 @@ import (
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/api/rest/client"
-
 	logging "github.com/ipfs/go-log/v2"
 	peer "github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
@@ -299,8 +298,8 @@ then check the integrity of the file and return.
 				if cidStr != "" {
 					ci, err := api.DecodeCid(cidStr)
 					checkErr("parsing cid", err)
-					cerr := globalClient.ECGet(ctx, ci)
-					checkErr("ecget", cerr)
+					err = globalClient.ECGet(ctx, ci)
+					checkErr("ecget", err)
 				} else {
 					checkErr("", errors.New("need a cid"))
 				}

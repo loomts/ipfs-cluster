@@ -705,9 +705,10 @@ func (c *defaultClient) Health(ctx context.Context) error {
 	return err
 }
 
-func (c *defaultClient) ECGet(ctx context.Context, cid api.Cid) error {
+func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid) error {
 	ctx, span := trace.StartSpan(ctx, "client/ECGet")
 	defer span.End()
-	err := c.do(ctx, "GET", "/ec", nil, nil, nil)
+	var nd files.Node
+	err := c.do(ctx, "GET", fmt.Sprintf("/ecget/%s", ci.String()), nil, nil, &nd)
 	return err
-} 
+}

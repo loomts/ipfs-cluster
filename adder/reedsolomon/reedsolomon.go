@@ -42,7 +42,7 @@ type ReedSolomon struct {
 	curShardJ    int
 	shardSize    int
 	parityLen    int
-	parityCh     chan ParityShard
+	parityCh     chan Shard
 	receAllData  bool
 }
 
@@ -69,13 +69,13 @@ func New(ctx context.Context, d int, p int, shardSize int) *ReedSolomon {
 		parityShards: p,
 		curShardI:    0,
 		curShardJ:    0,
-		parityCh:     make(chan ParityShard),
+		parityCh:     make(chan Shard),
 		parityLen:    0,
 		receAllData:  false,
 	}
 }
 
-func (rs *ReedSolomon) GetParityCh() <-chan ParityShard {
+func (rs *ReedSolomon) GetParityCh() <-chan Shard {
 	return rs.parityCh
 }
 
@@ -100,7 +100,8 @@ func (rs *ReedSolomon) Encode(isLast bool) {
 		// make a new slice to copy b and send out
 		out := make([]byte, len(b))
 		copy(out, b)
-		rs.parityCh <- ParityShard{
+		rs.parityCh <- Shard{
+			Cid:     rs.s2c[rs.parityLen],
 			RawData: out,
 			Name:    fmt.Sprintf("parity-shard-%d", rs.parityLen),
 			Links:   rs.s2c,

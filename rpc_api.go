@@ -3,13 +3,13 @@ package ipfscluster
 import (
 	"context"
 	"errors"
-
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/state"
 	"github.com/ipfs-cluster/ipfs-cluster/version"
+	"github.com/ipfs/boxo/files"
 
-	peer "github.com/libp2p/go-libp2p/core/peer"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
+	peer "github.com/libp2p/go-libp2p/core/peer"
 
 	ocgorpc "github.com/lanzafame/go-libp2p-ocgorpc"
 	"go.opencensus.io/trace"
@@ -438,6 +438,16 @@ func (rpcapi *ClusterRPCAPI) IPFSID(ctx context.Context, in peer.ID, out *api.IP
 		Addresses: pingVal.IPFSAddresses,
 	}
 	*out = i
+	return nil
+}
+
+// ECGet Erasure Coding Get, get and reconstruct file if needed
+func (rpcapi *ClusterRPCAPI) ECGet(ctx context.Context, in api.Cid, out *files.Node) error {
+	nd, err := rpcapi.c.ECGet(ctx, in)
+	if err != nil {
+		return err
+	}
+	*out = nd
 	return nil
 }
 

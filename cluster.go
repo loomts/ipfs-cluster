@@ -17,9 +17,13 @@ import (
 	"github.com/ipfs-cluster/ipfs-cluster/rpcutil"
 	"github.com/ipfs-cluster/ipfs-cluster/state"
 	"github.com/ipfs-cluster/ipfs-cluster/version"
+	"github.com/ipfs/go-merkledag"
 	"go.uber.org/multierr"
 
+	"github.com/ipfs/boxo/files"
+	blocks "github.com/ipfs/go-block-format"
 	ds "github.com/ipfs/go-datastore"
+	format "github.com/ipfs/go-ipld-format"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
 	dual "github.com/libp2p/go-libp2p-kad-dht/dual"
 	host "github.com/libp2p/go-libp2p/core/host"
@@ -1374,8 +1378,7 @@ func (c *Cluster) PinGet(ctx context.Context, h api.Cid) (api.Pin, error) {
 	if err != nil {
 		return api.Pin{}, err
 	}
-	fmt.Println("======================================PinGet======================================")
-	fmt.Printf("cid: %v, allocation:%v, name:%v, metadata:%v\n",pin.Cid,pin.Allocations,pin.Name,pin.Metadata)
+	fmt.Printf("cid: %v, allocation:%v, name:%v, metadata:%v\n", pin.Cid, pin.Allocations, pin.Name, pin.Metadata)
 	return pin, nil
 }
 
@@ -2282,8 +2285,97 @@ func (c *Cluster) RepoGCLocal(ctx context.Context) (api.RepoGC, error) {
 	return resp, nil
 }
 
-func (c *Cluster) ECGet(ctx context.Context, cid api.Cid) error {
+// 1. get metadata
+// 2. get IPFS block
+// 3. construct shards
+func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) (files.Node, error) {
 	ctx, span := trace.StartSpan(ctx, "cluster/ECGet")
 	defer span.End()
-	return nil
+	metaPin, err := c.PinGet(ctx, ci)
+	if err != nil {
+		return nil, fmt.Errorf("cid was not pinned: %s", err)
+	}
+	if metaPin.Type != api.MetaType {
+		return nil, fmt.Errorf("cid not MetaPin type")
+	}
+	if metaPin.Reference == nil {
+		return nil, errors.New("metaPin.Reference is unset")
+	}
+
+	clusterPin, err := c.PinGet(ctx, *metaPin.Reference)
+	if err != nil {
+		return nil, fmt.Errorf("cluster pin was not pinned: %s", err)
+	}
+	if clusterPin.Type != api.ClusterDAGType {
+		return nil, fmt.Errorf("bad ClusterDAGPin type reference from MetaPin")
+	}
+	if !clusterPin.Reference.Equals(metaPin.Cid) {
+		return nil, fmt.Errorf("clusterDAG should reference the MetaPin")
+	}
+
+	clusterDAGBlock, err := c.ipfs.BlockGet(ctx, clusterPin.Cid)
+	if err != nil {
+		return nil, fmt.Errorf("cluster pin was not stored: %s", err)
+	}
+
+	clusterDAGNode, err := sharding.CborDataToNode(clusterDAGBlock, "cbor")
+	if err != nil {
+		return nil, err
+	}
+
+	shards := clusterDAGNode.Links()
+	fileb := make([]byte, 0)
+	var ref api.Cid
+	// traverse shards in order
+	// origin shards is map[string]cid.Cid -> 0,cid0; 1,cid1
+	for i := 0; i < len(shards); i++ {
+		sh, _, err := clusterDAGNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
+		if err != nil {
+			return nil, err
+		}
+
+		shardPin, err := c.PinGet(ctx, api.NewCid(sh.Cid))
+		if err != nil {
+			return nil, fmt.Errorf("shard was not pinned: %s %s", sh.Cid, err)
+		}
+
+		if ref != api.CidUndef && !shardPin.Reference.Equals(ref) {
+			return nil, fmt.Errorf("ref (%s) should point to previous shard (%s)", ref, shardPin.Reference)
+		}
+		ref = shardPin.Cid
+
+		shardBlock, err := c.ipfs.BlockGet(ctx, shardPin.Cid)
+		if err != nil {
+			return nil, fmt.Errorf("shard block was not stored: %s", err)
+		}
+		shardNode, err := sharding.CborDataToNode(shardBlock, "cbor")
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range shardNode.Links() {
+			ci := l.Cid
+			b, err := c.ipfs.BlockGet(ctx, api.NewCid(ci))
+			if err != nil {
+				fmt.Println("cannot get block of shard")
+			}
+			fileb = append(fileb, b...)
+		}
+	}
+	return files.NewBytesFile(fileb), nil
+}
+
+func (c *Cluster) ECGetBlock(ctx context.Context, ci api.Cid) (format.Node, error) {
+	ctx, span := trace.StartSpan(ctx, "cluster/ECGetBlock")
+	defer span.End()
+	b, err := c.ipfs.BlockGet(ctx, ci)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println("starting ecgetblock decode block")
+	block := blocks.NewBlock(b)
+	nd, err := merkledag.DecodeProtobufBlock(block)
+	if err != nil {
+		return nil, err
+	}
+	return nd, nil
 }

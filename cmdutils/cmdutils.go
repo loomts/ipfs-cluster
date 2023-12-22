@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ipfs/go-datastore"
 	ipfscluster "github.com/ipfs-cluster/ipfs-cluster"
 	ipfshttp "github.com/ipfs-cluster/ipfs-cluster/ipfsconn/ipfshttp"
-	host "github.com/libp2p/go-libp2p/core/host"
+	"github.com/ipfs/go-datastore"
 	dual "github.com/libp2p/go-libp2p-kad-dht/dual"
+	host "github.com/libp2p/go-libp2p/core/host"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
