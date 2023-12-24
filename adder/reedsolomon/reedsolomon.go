@@ -3,47 +3,44 @@
 // Consider this scenario: Three machines & dataShards:parityShards = 6:3 -> 1/2 redundancy and tolerate one machine failure
 // suppose the scenario that file totalShard%dataShards!=0 -> totalShard=k*dataShards+mShards(mShards<dataShards), then we will use Encode generate (k+1)*parityShards.
 // TODO(loomt) according to the size of cluster metrics, adjust the dataShards and parityShards
-// TODO(loomt) this version is encode once, but split to 6*n and encode n times better
 // TODO(loomt) make a buffer pool enable concurrent encode
-// TODO(loomt) try to use io.Reader Seeker reset iterator and avoid copy from blocks
 // TODO(loomt) add cancle context from dag_service
+
 package reedsolomon
 
 import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"unsafe"
 
+	ipld "github.com/ipfs/go-ipld-format"
+
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
+	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/templexxx/reedsolomon"
 )
 
 var log = logging.Logger("reedsolomon")
 
+type BlockStat string
+
 const (
 	DefaultDataShards   = 6
 	DefaultParityShards = 3
+	DefaultBlock        = BlockStat("defaultBlock")
+	ShardEndBlock       = BlockStat("shardEndBlock")
+	FileEndBlock        = BlockStat("fileEndBlock")
 )
 
-type ReedSolomon struct {
-	lock   sync.Mutex
-	rs     *reedsolomon.RS
-	ctx    context.Context
-	blocks [][]byte
-	s2c    map[int]api.Cid
-
-	dataShards   int
-	parityShards int
-	curShardI    int
-	curShardJ    int
-	shardSize    int
-	parityLen    int
-	parityCh     chan Shard
-	receAllData  bool
+type StatBlock struct {
+	ipld.Node
+	Stat BlockStat
+	api.Cid
 }
 
 type ParityShard struct {
@@ -52,42 +49,96 @@ type ParityShard struct {
 	Links   map[int]api.Cid // Links to data shards
 }
 
+type ReedSolomon struct {
+	mu           sync.Mutex
+	rs           *reedsolomon.RS
+	ctx          context.Context
+	blocks       [][]byte
+	batchCid     map[int]api.Cid
+	parityCids   map[string]cid.Cid // send to sharding dag service
+	dataShards   int
+	parityShards int
+	curShardI    int
+	curShardJ    int
+	shardSize    int
+	totalSize    int
+	parityLen    int
+	parityCh     chan Shard
+	blockCh      chan StatBlock
+	receAllData  bool
+}
+
 func New(ctx context.Context, d int, p int, shardSize int) *ReedSolomon {
 	rs, _ := reedsolomon.New(d, p)
 	b := make([][]byte, d+p)
 	for i := range b {
 		b[i] = make([]byte, shardSize)
 	}
-	return &ReedSolomon{
-		lock:         sync.Mutex{},
+	r := &ReedSolomon{
+		mu:           sync.Mutex{},
 		rs:           rs,
 		ctx:          ctx,
 		blocks:       b,
-		s2c:          make(map[int]api.Cid),
+		batchCid:     make(map[int]api.Cid),
+		parityCids:   make(map[string]cid.Cid),
 		shardSize:    shardSize,
 		dataShards:   d,
 		parityShards: p,
 		curShardI:    0,
 		curShardJ:    0,
-		parityCh:     make(chan Shard),
+		totalSize:    0,
+		parityCh:     make(chan Shard, 1024),
+		blockCh:      make(chan StatBlock, 1024),
 		parityLen:    0,
 		receAllData:  false,
 	}
+	go r.handleBlock()
+	return r
 }
 
-func (rs *ReedSolomon) GetParityCh() <-chan Shard {
-	return rs.parityCh
+// handleBlock handle block from dag_service
+func (rs *ReedSolomon) handleBlock() {
+	for {
+		sb := <-rs.blockCh
+		switch sb.Stat {
+		case DefaultBlock:
+			rs.mu.Lock()
+			b := sb.RawData()
+			if rs.curShardJ+len(b) < rs.shardSize {
+				copy(rs.blocks[rs.curShardI][rs.curShardJ:], b)
+				rs.curShardJ += len(b)
+			} else {
+				log.Errorf("unreachable code, block size:%d, curShardJ:%d, shardSize:%d", len(b), rs.curShardJ, rs.shardSize)
+			}
+			rs.mu.Unlock()
+		case ShardEndBlock:
+			rs.mu.Lock()
+			// fill with 0 to align this data shard
+			copy(rs.blocks[rs.curShardI][rs.curShardJ:], bytes.Repeat([]byte{0}, rs.shardSize-rs.curShardJ))
+			rs.batchCid[rs.curShardI] = sb.Cid
+			rs.curShardI, rs.curShardJ = rs.curShardI+1, 0
+			if rs.curShardI == rs.dataShards {
+				log.Errorf("encode false")
+				rs.Encode(false)
+			}
+			rs.mu.Unlock()
+		case FileEndBlock:
+			rs.mu.Lock()
+			log.Errorf("encode true")
+			rs.Encode(true)
+			rs.mu.Unlock()
+			return
+		}
+	}
 }
 
 // Encode take dataShards shard as a batch, if shards no reach dataShards, fill with 0
 func (rs *ReedSolomon) Encode(isLast bool) {
-	rs.lock.Lock()
-	defer rs.lock.Unlock()
 	if isLast && rs.curShardI == 0 && rs.curShardJ == 0 {
-		// no data, no need to encode
-		rs.curShardI = 0
-		rs.receAllData = isLast
+		// no data, don't need to encode
+		log.Error("close paritych")
 		close(rs.parityCh)
+		rs.receAllData = isLast
 		return
 	}
 	rs.align()
@@ -101,18 +152,18 @@ func (rs *ReedSolomon) Encode(isLast bool) {
 		out := make([]byte, len(b))
 		copy(out, b)
 		rs.parityCh <- Shard{
-			Cid:     rs.s2c[rs.parityLen],
 			RawData: out,
 			Name:    fmt.Sprintf("parity-shard-%d", rs.parityLen),
-			Links:   rs.s2c,
+			Links:   rs.batchCid,
 		}
+		rs.totalSize += rs.shardSize
 		rs.parityLen += 1
 	}
 	if isLast {
+		log.Error("close paritych")
 		close(rs.parityCh)
+		rs.receAllData = isLast
 	}
-	rs.s2c = make(map[int]api.Cid)
-	rs.receAllData = isLast
 }
 
 func (rs *ReedSolomon) ReConstruct(data [][]byte, replaceRows []int, parity [][]byte) error {
@@ -123,33 +174,34 @@ func (rs *ReedSolomon) ReConstruct(data [][]byte, replaceRows []int, parity [][]
 	return nil
 }
 
-// HandleBlock receive block and end with a shard
-// cid == CidUndef && b != nil -> block
-// cid != CidUndef && b != nil -> last block of shard
-// cid == CidUndef && b == nil -> end of file
-func (rs *ReedSolomon) HandleBlock(b []byte, cid api.Cid) {
-	rs.lock.Lock()
-	defer rs.lock.Unlock()
-	if rs.curShardJ+len(b) < rs.shardSize {
-		copy(rs.blocks[rs.curShardI][rs.curShardJ:], b)
-		rs.curShardJ += len(b)
-	}
-	if cid.Equals(api.CidUndef) && b == nil {
-		// end of file
-		go rs.Encode(true)
-	} else if !cid.Equals(api.CidUndef) {
-		rs.s2c[rs.curShardI] = cid
-		rs.curShardI, rs.curShardJ = rs.curShardI+1, 0
-		// last block of shard
-		if rs.curShardI == rs.dataShards {
-			go rs.Encode(false)
-		}
-	}
-}
-
 func (rs *ReedSolomon) align() {
-	// align shards to the same size, fill the empty data shard with 0
-	CBytes := (*[1 << 30]byte)(unsafe.Pointer(&rs.blocks[rs.curShardI][rs.curShardJ]))[: rs.shardSize-rs.curShardJ : rs.shardSize-rs.curShardJ]
+	// fill bytes with 0 to align shard all that followed
+	total := (rs.dataShards-rs.curShardI)*rs.shardSize + rs.shardSize - rs.curShardJ
+	CBytes := (*[1 << 30]byte)(unsafe.Pointer(&rs.blocks[rs.curShardI][rs.curShardJ]))[:total:total]
 	CBytes = bytes.Repeat([]byte{0}, len(CBytes))
 	rs.curShardI, rs.curShardJ = 0, 0
+}
+
+func (rs *ReedSolomon) ReceiveAll() bool {
+	return rs.receAllData
+}
+
+func (rs *ReedSolomon) TotalSize() uint64 {
+	return uint64(rs.totalSize)
+}
+
+func (rs *ReedSolomon) GetParityShards() map[string]cid.Cid {
+	return rs.parityCids
+}
+
+func (rs *ReedSolomon) AddParityCid(key int, cid api.Cid) {
+	rs.parityCids[strconv.Itoa(key)] = cid.Cid
+}
+
+func (rs *ReedSolomon) GetParityFrom() <-chan Shard {
+	return rs.parityCh
+}
+
+func (rs *ReedSolomon) SendBlockTo() chan<- StatBlock {
+	return rs.blockCh
 }

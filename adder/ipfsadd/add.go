@@ -236,8 +236,9 @@ func (adder *Adder) addNode(node ipld.Node, path string) error {
 			return err
 		}
 	}
-
+	log.Errorf("cache %v", path)
 	if err := mfs.PutNode(mr, path, node); err != nil {
+		log.Errorf("cache %v error:%v", path, err)
 		return err
 	}
 
@@ -291,17 +292,12 @@ func (adder *Adder) AddAllAndPin(file files.Node) (ipld.Node, error) {
 			return nil, fmt.Errorf("expected at least one child dir, got none")
 		}
 
-		// Replace root with the first child
-		name = children[0]
-		root, err = rootdir.Child(name)
-		if err != nil {
-			// Cluster: use the last file we added
-			// if we have one.
-			if adder.lastFile == nil {
-				return nil, err
-			}
-			root = adder.lastFile
+		// Replace root with the last file added
+		if adder.lastFile == nil {
+			log.Error("error: uncache lastFile")
+			return nil, err
 		}
+		root = adder.lastFile
 	}
 
 	err = mr.Close()
@@ -313,6 +309,8 @@ func (adder *Adder) AddAllAndPin(file files.Node) (ipld.Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	stat, err := nd.Stat()
+	log.Infof("root node:%v, stat: %v", nd.Cid(), stat)
 
 	// output directory events
 	err = adder.outputDirs(name, root)

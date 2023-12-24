@@ -2306,34 +2306,19 @@ func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) (files.Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cluster pin was not pinned: %s", err)
 	}
-	if clusterPin.Type != api.ClusterDAGType {
-		return nil, fmt.Errorf("bad ClusterDAGPin type reference from MetaPin")
-	}
-	if !clusterPin.Reference.Equals(metaPin.Cid) {
-		return nil, fmt.Errorf("clusterDAG should reference the MetaPin")
-	}
-
-	clusterDAGBlock, err := c.ipfs.BlockGet(ctx, clusterPin.Cid)
+	parityPin, err := c.PinGet(ctx, *clusterPin.Reference)
 	if err != nil {
-		return nil, fmt.Errorf("cluster pin was not stored: %s", err)
+		return nil, fmt.Errorf("cluster pin was not pinned: %s", err)
 	}
+	dataShards, err := c.resolveCid2Link(ctx, clusterPin.Cid)
+	parityShards, err := c.resolveCid2Link(ctx, parityPin.Cid)
 
-	clusterDAGNode, err := sharding.CborDataToNode(clusterDAGBlock, "cbor")
-	if err != nil {
-		return nil, err
-	}
-
-	shards := clusterDAGNode.Links()
 	fileb := make([]byte, 0)
+	parityb := make([]byte, 0)
 	var ref api.Cid
 	// traverse shards in order
 	// origin shards is map[string]cid.Cid -> 0,cid0; 1,cid1
-	for i := 0; i < len(shards); i++ {
-		sh, _, err := clusterDAGNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
-		if err != nil {
-			return nil, err
-		}
-
+	for _, sh := range dataShards {
 		shardPin, err := c.PinGet(ctx, api.NewCid(sh.Cid))
 		if err != nil {
 			return nil, fmt.Errorf("shard was not pinned: %s %s", sh.Cid, err)
@@ -2361,7 +2346,60 @@ func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) (files.Node, error) {
 			fileb = append(fileb, b...)
 		}
 	}
+	fmt.Println("size of file:", len(fileb))
+	for _, sh := range parityShards {
+		shardPin, err := c.PinGet(ctx, api.NewCid(sh.Cid))
+		if err != nil {
+			return nil, fmt.Errorf("shard was not pinned: %s %s", sh.Cid, err)
+		}
+
+		if ref != api.CidUndef && !shardPin.Reference.Equals(ref) {
+			return nil, fmt.Errorf("ref (%s) should point to previous shard (%s)", ref, shardPin.Reference)
+		}
+		ref = shardPin.Cid
+
+		shardBlock, err := c.ipfs.BlockGet(ctx, shardPin.Cid)
+		if err != nil {
+			return nil, fmt.Errorf("shard block was not stored: %s", err)
+		}
+		shardNode, err := sharding.CborDataToNode(shardBlock, "cbor")
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range shardNode.Links() {
+			ci := l.Cid
+			b, err := c.ipfs.BlockGet(ctx, api.NewCid(ci))
+			if err != nil {
+				fmt.Println("cannot get block of shard")
+			}
+			parityb = append(parityb, b...)
+		}
+	}
+	fmt.Println("size of parity:", len(parityb))
 	return files.NewBytesFile(fileb), nil
+}
+
+func (c *Cluster) resolveCid2Link(ctx context.Context, ci api.Cid) ([]*format.Link, error) {
+	block, err := c.ipfs.BlockGet(ctx, ci)
+	if err != nil {
+		return nil, err
+	}
+	dagNode, err := sharding.CborDataToNode(block, "cbor")
+	if err != nil {
+		return nil, err
+	}
+	shards := dagNode.Links()
+	links := make([]*format.Link, len(shards))
+	// traverse shards in order
+	// origin shards is map[string]cid.Cid -> 0,cid0; 1,cid1
+	for i := 0; i < len(shards); i++ {
+		sh, _, err := dagNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
+		if err != nil {
+			return nil, err
+		}
+		links = append(links, sh)
+	}
+	return links, nil
 }
 
 func (c *Cluster) ECGetBlock(ctx context.Context, ci api.Cid) (format.Node, error) {

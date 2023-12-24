@@ -12,7 +12,7 @@ import (
 	"sync"
 
 	"github.com/ipfs-cluster/ipfs-cluster/adder/ipfsadd"
-	"github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
+	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs/boxo/ipld/unixfs"
 	"github.com/ipld/go-car"
@@ -55,6 +55,8 @@ func init() {
 // add implementation.
 type ClusterDAGService interface {
 	ipld.DAGService
+	// FlushCurrentShard flushes the current shard and returns its root CID
+	FlushCurrentShard(ctx context.Context) (api.Cid, error)
 	// Finalize receives the IPFS content root CID as
 	// returned by the ipfs adder.
 	Finalize(ctx context.Context, ipfsRoot api.Cid) (api.Cid, error)
@@ -65,8 +67,10 @@ type ClusterDAGService interface {
 	// for the added content.
 	Allocations() []peer.ID
 
-	GetRS() *reedsolomon.ReedSolomon
+	GetRS() *rs.ReedSolomon
 
+	// SetParity for single.dag_service: sets the parity shard name, for sharding.dag_service:
+	// add the parity metadata to cluster DAG
 	SetParity(name string)
 }
 
@@ -156,15 +160,13 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	// concurrently, add parity as a single file
-	// TODO(loomt), add metadata for this file, such as rs-filename, it contain data shards and parity shards links
 	go func() {
 		var dagFmtr2 dagFormatter
 		var err error
 		defer wg.Done()
 		if a.params.Erasure {
 			// add parity shards
-			rs := a.dgs.GetRS()
-			parityCh := rs.GetParityCh()
+			i := 0
 			switch a.params.Format {
 			case "", "unixfs":
 				dagFmtr2, err = newIpfsAdder(ctx, a.dgs2, a.params, a.output)
@@ -177,8 +179,10 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 				logger.Errorf("error creating dag formatter: %s", err)
 			}
 			for {
-				parity := <-parityCh
-				if parity.Name == "" {
+				parity := <-a.dgs.GetRS().GetParityFrom()
+				logger.Infof("receive parity: %s", parity.Name)
+				if parity.Name == "" { // channel closed
+					a.dgs.SetParity("")
 					return
 				}
 				pf := files.NewBytesFile(parity.RawData)
@@ -191,7 +195,8 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 				if err != nil {
 					logger.Error("error finalizing adder:", err)
 				}
-				logger.Infof("%s successfully added to cluster", parityClusterRoot)
+				a.dgs.GetRS().AddParityCid(i, parityClusterRoot)
+				logger.Infof("%s successfully added to cluster %s", parity.Name, parityClusterRoot)
 			}
 		}
 	}()
@@ -241,14 +246,26 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 	if it.Err() != nil {
 		return api.CidUndef, it.Err()
 	}
-
-	clusterRoot, err := a.dgs.Finalize(a.ctx, adderRoot)
+	if a.params.Erasure {
+		lastCid, err := a.dgs.FlushCurrentShard(ctx)
+		if err != nil {
+			return lastCid, err
+		}
+		if a.params.Erasure {
+			a.dgs.GetRS().SendBlockTo() <- rs.StatBlock{Stat: rs.FileEndBlock}
+		}
+		if !lastCid.Equals(adderRoot) {
+			// TODO: sometime it's not the same, check why
+			logger.Warnf("the last added CID (%s) is not the IPFS data root (%s). This is only normal when adding a single file without wrapping in directory.", lastCid, adderRoot)
+		}
+	}
+	wg.Wait()
+	clusterRoot, err := a.dgs.Finalize(a.ctx, adderRoot) // pin the clusterDAG and Metadata
 	if err != nil {
 		logger.Error("error finalizing adder:", err)
 		return api.CidUndef, err
 	}
 	logger.Infof("%s successfully added to cluster", clusterRoot)
-	wg.Wait()
 	return clusterRoot, nil
 }
 
@@ -263,7 +280,6 @@ func newIpfsAdder(ctx context.Context, dgs ClusterDAGService, params api.AddPara
 		logger.Error(err)
 		return nil, err
 	}
-
 	iadder.Trickle = params.Layout == "trickle"
 	iadder.RawLeaves = params.RawLeaves
 	iadder.Chunker = params.Chunker

@@ -9,15 +9,15 @@ import (
 	"strings"
 	"sync"
 
-	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	adder "github.com/ipfs-cluster/ipfs-cluster/adder"
+	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
 	cid "github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log/v2"
-	peer "github.com/libp2p/go-libp2p/core/peer"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
+	peer "github.com/libp2p/go-libp2p/core/peer"
 )
 
 var logger = logging.Logger("singledags")
@@ -40,7 +40,7 @@ type DAGService struct {
 	blocks          chan api.NodeWithMeta
 	closeBlocksOnce sync.Once
 	recentBlocks    *recentBlocks
-	parityIdx       int // parity index, only used  when enable erasure coding
+	parityIdx       int // parity index, only used when enable erasure coding
 }
 
 // New returns a new Adder with the given rpc Client. The client is used
@@ -164,9 +164,10 @@ func (dgs *DAGService) Finalize(ctx context.Context, root api.Cid) (api.Cid, err
 	if dgs.addParams.Erasure {
 		rootPin.ReplicationFactorMax = 1
 		rootPin.ReplicationFactorMin = 1
-		// reflash block ch to reuse dag, is safe, because adderutils.go defer the close func of block ch
+		// reflash blocks and blockStreamer to reuse dag_service
 		dgs.blocks = make(chan api.NodeWithMeta, 256)
 		dgs.closeBlocksOnce = sync.Once{}
+		dgs.bs = adder.NewBlockStreamer(dgs.ctx, dgs.rpcClient, []peer.ID{dgs.dests[0]}, dgs.blocks)
 		return root, adder.ErasurePin(ctx, dgs.rpcClient, rootPin)
 	} else {
 		return root, adder.Pin(ctx, dgs.rpcClient, rootPin)
@@ -218,4 +219,8 @@ func (dgs *DAGService) SetParity(name string) {
 	dgs.addParams.Erasure = true
 	dgs.addParams.Name = name
 	dgs.parityIdx = idx
+}
+
+func (dgs *DAGService) FlushCurrentShard(ctx context.Context) (cid api.Cid, err error) {
+	return api.CidUndef, err
 }

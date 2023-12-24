@@ -37,17 +37,23 @@ func newReadableMockCDAGServ() *mockCDAGServ {
 }
 
 // noop
-func (dag *mockCDAGServ) Finalize(ctx context.Context, root api.Cid) (api.Cid, error) {
+func (dgs *mockCDAGServ) Finalize(ctx context.Context, root api.Cid) (api.Cid, error) {
 	return root, nil
 }
 
-func (dag *mockCDAGServ) Allocations() []peer.ID {
+func (dgs *mockCDAGServ) Allocations() []peer.ID {
 	return nil
 }
+
 func (dgs *mockCDAGServ) GetRS() *rs.ReedSolomon {
 	return nil
 }
+
 func (dgs *mockCDAGServ) SetParity(name string) {
+}
+
+func (dgs *mockCDAGServ) FlushCurrentShard(ctx context.Context) (cid api.Cid, err error) {
+	return api.CidUndef, err
 }
 
 func TestAdder(t *testing.T) {

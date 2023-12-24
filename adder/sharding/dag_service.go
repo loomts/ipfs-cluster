@@ -90,32 +90,17 @@ func (dgs *DAGService) Close() error {
 	}
 	return nil
 }
-
-// Finalize finishes sharding, creates the cluster DAG and pins it along
-// with the meta pin for the root node of the content.
-func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid, error) {
-	lastCid, err := dgs.flushCurrentShard(ctx)
+func (dgs *DAGService) pinShardsMeta(ctx context.Context, ref api.Cid, shard2cid map[string]cid.Cid, parity bool) (api.Cid, error) {
+	// Pin the shards DAG
+	shardsMetaDAG, err := makeDAG(ctx, shard2cid)
 	if err != nil {
-		return api.NewCid(lastCid), err
+		return api.CidUndef, err
 	}
-	if dgs.addParams.Erasure {
-		dgs.rs.HandleBlock(nil, api.CidUndef) // send the last block of this file
-	}
-
-	if !lastCid.Equals(dataRoot.Cid) {
-		logger.Warnf("the last added CID (%s) is not the IPFS data root (%s). This is only normal when adding a single file without wrapping in directory.", lastCid, dataRoot)
-	}
-
-	clusterDAGNodes, err := makeDAG(ctx, dgs.shards)
-	if err != nil {
-		return dataRoot, err
-	}
-
 	// PutDAG to ourselves
 	blocks := make(chan api.NodeWithMeta, 256)
 	go func() {
 		defer close(blocks)
-		for _, n := range clusterDAGNodes {
+		for _, n := range shardsMetaDAG {
 			select {
 			case <-ctx.Done():
 				logger.Error(ctx.Err())
@@ -129,41 +114,65 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	bs := adder.NewBlockStreamer(ctx, dgs.rpcClient, []peer.ID{""}, blocks)
 	select {
 	case <-ctx.Done():
-		return dataRoot, ctx.Err()
+		return api.CidUndef, ctx.Err()
 	case <-bs.Done():
 	}
 
 	if err := bs.Err(); err != nil {
-		return dataRoot, err
+		return api.CidUndef, err
 	}
+	shardsMetaDAGCid := shardsMetaDAG[0].Cid()
+	output := api.AddedOutput{}
+	output.Name = fmt.Sprintf("%s-clusterDAG", dgs.addParams.Name)
+	output.Cid = api.NewCid(shardsMetaDAGCid)
+	output.Size = dgs.totalSize
+	if parity {
+		output.Name = fmt.Sprintf("%s-parity-clusterDAG", dgs.addParams.Name)
+		output.Size = dgs.rs.TotalSize()
+	}
+	dgs.sendOutput(output)
 
-	clusterDAG := clusterDAGNodes[0].Cid()
-
-	dgs.sendOutput(api.AddedOutput{
-		Name:        fmt.Sprintf("%s-clusterDAG", dgs.addParams.Name),
-		Cid:         api.NewCid(clusterDAG),
-		Size:        dgs.totalSize,
-		Allocations: nil,
-	})
-
-	// Pin the ClusterDAG
-	clusterDAGPin := api.PinWithOpts(api.NewCid(clusterDAG), dgs.addParams.PinOptions)
-	clusterDAGPin.ReplicationFactorMin = -1
-	clusterDAGPin.ReplicationFactorMax = -1
-	clusterDAGPin.MaxDepth = 0 // pin direct
-	clusterDAGPin.Name = fmt.Sprintf("%s-clusterDAG", dgs.addParams.Name)
-	clusterDAGPin.Type = api.ClusterDAGType
-	clusterDAGPin.Reference = &dataRoot
+	shardsMetaDAGPin := api.PinWithOpts(api.NewCid(shardsMetaDAGCid), dgs.addParams.PinOptions)
+	shardsMetaDAGPin.ReplicationFactorMin = -1
+	shardsMetaDAGPin.ReplicationFactorMax = -1
+	shardsMetaDAGPin.MaxDepth = 0 // pin direct
+	shardsMetaDAGPin.Name = fmt.Sprintf("%s-clusterDAG", dgs.addParams.Name)
+	shardsMetaDAGPin.Type = api.ClusterDAGType
+	shardsMetaDAGPin.Reference = &ref
+	if parity {
+		shardsMetaDAGPin.Name = fmt.Sprintf("%s-parity-clusterDAG", dgs.addParams.Name)
+	}
 	// Update object with response.
-	err = adder.Pin(ctx, dgs.rpcClient, clusterDAGPin)
+	err = adder.Pin(ctx, dgs.rpcClient, shardsMetaDAGPin)
+	if err != nil {
+		return api.CidUndef, err
+	}
+	return shardsMetaDAGPin.Cid, err
+}
+
+// Finalize finishes sharding, creates the cluster DAG and pins it along
+// with the meta pin for the root node of the content.
+func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid, error) {
+	ref := dataRoot
+	if dgs.addParams.Erasure {
+		parityCids := dgs.rs.GetParityShards() // erasure: first pin parity shards then pin data shards and ref to parity shards.
+		paritysCid, err := dgs.pinShardsMeta(ctx, dataRoot, parityCids, true)
+		ref = paritysCid
+		if err != nil {
+			return dataRoot, err
+		}
+		logger.Errorf("pin parity shards metadata: %s", paritysCid)
+	}
+	// clusterDAG
+	clusterDAG, err := dgs.pinShardsMeta(ctx, ref, dgs.shards, false)
 	if err != nil {
 		return dataRoot, err
 	}
-
+	logger.Errorf("pin data shards metadata: %s", clusterDAG)
 	// Pin the META pin
 	metaPin := api.PinWithOpts(dataRoot, dgs.addParams.PinOptions)
 	metaPin.Type = api.MetaType
-	ref := api.NewCid(clusterDAG)
+	ref = clusterDAG
 	metaPin.Reference = &ref
 	metaPin.MaxDepth = 0 // irrelevant. Meta-pins are not pinned
 	err = adder.Pin(ctx, dgs.rpcClient, metaPin)
@@ -172,7 +181,7 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	}
 
 	// Log some stats
-	dgs.logStats(metaPin.Cid, clusterDAGPin.Cid)
+	dgs.logStats(metaPin.Cid, clusterDAG)
 
 	// Consider doing this? Seems like overkill
 	//
@@ -226,12 +235,12 @@ func (dgs *DAGService) ingestBlock(ctx context.Context, n ipld.Node) error {
 
 	// this is not same as n.Size()
 	size := uint64(len(n.RawData()))
-	if dgs.addParams.Erasure {
-		dgs.rs.HandleBlock(n.RawData(), api.CidUndef) // blocks do not need cid
-	}
 	// add the block to it if it fits and return
 	if shard.Size()+size < shard.Limit() {
 		shard.AddLink(ctx, n.Cid(), size)
+		if dgs.addParams.Erasure {
+			dgs.rs.SendBlockTo() <- rs.StatBlock{Node: n, Stat: rs.DefaultBlock}
+		}
 		return dgs.currentShard.sendBlock(ctx, n)
 	}
 
@@ -251,7 +260,7 @@ func (dgs *DAGService) ingestBlock(ctx context.Context, n ipld.Node) error {
 		return errors.New("block doesn't fit in empty shard: shard size too small?")
 	}
 
-	_, err := dgs.flushCurrentShard(ctx)
+	_, err := dgs.FlushCurrentShard(ctx)
 	if err != nil {
 		return err
 	}
@@ -296,21 +305,21 @@ func (dgs *DAGService) sendOutput(ao api.AddedOutput) {
 }
 
 // flushes the dgs.currentShard and returns the LastLink()
-func (dgs *DAGService) flushCurrentShard(ctx context.Context) (cid.Cid, error) {
+func (dgs *DAGService) FlushCurrentShard(ctx context.Context) (api.Cid, error) {
 	shard := dgs.currentShard
 	if shard == nil {
-		return cid.Undef, errors.New("cannot flush a nil shard")
+		return api.CidUndef, errors.New("cannot flush a nil shard")
 	}
 
 	lens := len(dgs.shards)
 
-	shardCid, endBlock, err := shard.Flush(ctx, lens, dgs.previousShard)
+	shardCid, err := shard.Flush(ctx, lens, dgs.previousShard)
 	// end of shard
 	if dgs.addParams.Erasure {
-		dgs.rs.HandleBlock(endBlock, api.NewCid(shardCid)) // blocks do not need cid
+		dgs.rs.SendBlockTo() <- rs.StatBlock{Cid: api.NewCid(shardCid), Stat: rs.ShardEndBlock}
 	}
 	if err != nil {
-		return shardCid, err
+		return api.NewCid(shardCid), err
 	}
 	dgs.totalSize += shard.Size()
 	dgs.shards[fmt.Sprintf("%d", lens)] = shardCid
@@ -323,7 +332,7 @@ func (dgs *DAGService) flushCurrentShard(ctx context.Context) (cid.Cid, error) {
 		Allocations: shard.Allocations(),
 	})
 
-	return shard.LastLink(), nil
+	return api.NewCid(shard.LastLink()), nil
 }
 
 // AddMany calls Add for every given node.
@@ -342,4 +351,8 @@ func (dgs *DAGService) GetRS() *rs.ReedSolomon {
 }
 
 func (dgs *DAGService) SetParity(name string) {
+	parityShards := dgs.rs.GetParityShards()
+	for s, c := range parityShards {
+		dgs.shards[s] = c
+	}
 }

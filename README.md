@@ -13,7 +13,8 @@ This work can be devide into three part.
 2. Allocate, descide which shard send to which node. The implementation make more peers store the data shards, and more than one peer store the parity shards. See `ShardAllocate` for details. After figure who to store the shard, then use RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to **remote** or local Pin. So I open the `RPCTrusted` promission for `Cluster.Pin`.
 3. Get, Working in progress.
 
-
+### TODO
+Now use the sharding dag_service to store the origin file and single dag_service to store single file. Many be is a method to combine them with a new dag_service.
 
 ---
 [![Made by](https://img.shields.io/badge/By-Protocol%20Labs-000000.svg?style=flat-square)](https://protocol.ai)
@@ -48,8 +49,15 @@ Please participate in the [IPFS Cluster user registry](https://docs.google.com/f
 
 ## Table of Contents
 
+- [IPFS Cluster(Erasure Coding Support)](#ipfs-clustererasure-coding-support)
+  - [Warning](#warning)
+  - [Motivation](#motivation)
+  - [Overview](#overview)
+  - [TODO](#todo)
+  - [Are you using IPFS Cluster?](#are-you-using-ipfs-cluster)
+- [Table of Contents](#table-of-contents)
 - [Documentation](#documentation)
-- [News & Roadmap](#news--roadmap)
+- [News \& Roadmap](#news--roadmap)
 - [Install](#install)
 - [Usage](#usage)
 - [Contribute](#contribute)

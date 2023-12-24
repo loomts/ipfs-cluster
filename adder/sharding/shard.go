@@ -11,8 +11,8 @@ import (
 	ipld "github.com/ipfs/go-ipld-format"
 
 	cid "github.com/ipfs/go-cid"
-	peer "github.com/libp2p/go-libp2p/core/peer"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
+	peer "github.com/libp2p/go-libp2p/core/peer"
 
 	humanize "github.com/dustin/go-humanize"
 )
@@ -117,20 +117,18 @@ func (sh *shard) Close() error {
 // Flush completes the allocation of this shard by building a CBOR node
 // and adding it to IPFS, then pinning it in cluster. It returns the Cid of the
 // shard.
-func (sh *shard) Flush(ctx context.Context, shardN int, prev cid.Cid) (cid.Cid, []byte, error) {
-	var endBlock []byte
+func (sh *shard) Flush(ctx context.Context, shardN int, prev cid.Cid) (cid.Cid, error) {
 	logger.Debugf("shard %d: flush", shardN)
 	nodes, err := makeDAG(ctx, sh.dagNode)
 	if err != nil {
-		return cid.Undef, []byte{}, err
+		return cid.Undef, err
 	}
 
 	for _, n := range nodes {
-		endBlock = append(endBlock, n.RawData()...)
 		err = sh.sendBlock(ctx, n)
 		if err != nil {
 			close(sh.blocks)
-			return cid.Undef, []byte{}, err
+			return cid.Undef, err
 		}
 	}
 
@@ -138,12 +136,12 @@ func (sh *shard) Flush(ctx context.Context, shardN int, prev cid.Cid) (cid.Cid, 
 
 	select {
 	case <-ctx.Done():
-		return cid.Undef, []byte{}, ctx.Err()
+		return cid.Undef, ctx.Err()
 	case <-sh.bs.Done():
 	}
 
 	if err := sh.bs.Err(); err != nil {
-		return cid.Undef, []byte{}, err
+		return cid.Undef, err
 	}
 
 	rootCid := nodes[0].Cid()
@@ -169,9 +167,9 @@ func (sh *shard) Flush(ctx context.Context, shardN int, prev cid.Cid) (cid.Cid, 
 	if sh.erasure {
 		pin.ReplicationFactorMin = 1
 		pin.ReplicationFactorMax = 1
-		return rootCid, endBlock, adder.ErasurePin(ctx, sh.rpc, pin)
+		return rootCid, adder.ErasurePin(ctx, sh.rpc, pin)
 	} else {
-		return rootCid, []byte{}, adder.Pin(ctx, sh.rpc, pin)
+		return rootCid, adder.Pin(ctx, sh.rpc, pin)
 	}
 }
 
