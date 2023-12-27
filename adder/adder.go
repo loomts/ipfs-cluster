@@ -182,7 +182,6 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 				parity := <-a.dgs.GetRS().GetParityFrom()
 				logger.Infof("receive parity: %s", parity.Name)
 				if parity.Name == "" { // channel closed
-					a.dgs.SetParity("")
 					return
 				}
 				pf := files.NewBytesFile(parity.RawData)
@@ -196,6 +195,7 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 					logger.Error("error finalizing adder:", err)
 				}
 				a.dgs.GetRS().AddParityCid(i, parityClusterRoot)
+				i += 1
 				logger.Infof("%s successfully added to cluster %s", parity.Name, parityClusterRoot)
 			}
 		}

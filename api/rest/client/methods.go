@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cheggaaa/pb"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
 	files "github.com/ipfs/boxo/files"
@@ -708,7 +710,41 @@ func (c *defaultClient) Health(ctx context.Context) error {
 func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid) error {
 	ctx, span := trace.StartSpan(ctx, "client/ECGet")
 	defer span.End()
-	var nd files.Node
-	err := c.do(ctx, "GET", fmt.Sprintf("/ecget/%s", ci.String()), nil, nil, &nd)
+
+	var b []byte
+	handler := func(dec *json.Decoder) error {
+		err := dec.Decode(&b)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	err := c.doStream(ctx, "GET", fmt.Sprintf("/ecget/%s", ci.String()), nil, nil, handler)
+	p, _ := os.Getwd()
+	err = writeFile(b, filepath.Join(p, ci.String()), true)
 	return err
+}
+
+// writeFile write file to local disk
+func writeFile(b []byte, fpath string, progress bool) error {
+	var bar *pb.ProgressBar
+	if progress {
+		bar = pb.New(len(b)).Start()
+		defer bar.Finish()
+	}
+	f, err := os.Create(fpath)
+	defer f.Close()
+	if err != nil {
+		return err
+	}
+	var r io.Reader = bytes.NewReader(b)
+	if bar != nil {
+		r = bar.NewProxyReader(r)
+	}
+	_, err = io.Copy(f, r)
+	if err != nil {
+		return err
+	}
+	return nil
 }

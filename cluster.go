@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"sync"
 	"time"
+
+	uio "github.com/ipfs/boxo/ipld/unixfs/io"
+	blocks "github.com/ipfs/go-block-format"
 
 	"github.com/ipfs-cluster/ipfs-cluster/adder"
 	"github.com/ipfs-cluster/ipfs-cluster/adder/sharding"
@@ -17,11 +21,8 @@ import (
 	"github.com/ipfs-cluster/ipfs-cluster/rpcutil"
 	"github.com/ipfs-cluster/ipfs-cluster/state"
 	"github.com/ipfs-cluster/ipfs-cluster/version"
-	"github.com/ipfs/go-merkledag"
 	"go.uber.org/multierr"
 
-	"github.com/ipfs/boxo/files"
-	blocks "github.com/ipfs/go-block-format"
 	ds "github.com/ipfs/go-datastore"
 	format "github.com/ipfs/go-ipld-format"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
@@ -2178,7 +2179,23 @@ func (c *Cluster) cidsFromMetaPin(ctx context.Context, h api.Cid) ([]api.Cid, er
 	for _, l := range clusterDagNode.Links() {
 		list = append([]api.Cid{api.NewCid(l.Cid)}, list...)
 	}
-
+	// Erasure Coding have another parity-ClusterDagPin
+	list = append([]api.Cid{*clusterDagPin.Reference}, list...)
+	parityClusterDagPin, err := c.PinGet(ctx, *clusterDagPin.Reference)
+	if err != nil {
+		return list, fmt.Errorf("could not get parity-clusterDAG pin from state. If you not use erasure coding, please ignore: %s", err)
+	}
+	parityClusterDagBlock, err := c.ipfs.BlockGet(ctx, parityClusterDagPin.Cid)
+	if err != nil {
+		return list, fmt.Errorf("error reading parity-clusterDAG block from ipfs: %s", err)
+	}
+	parityClusterDagNode, err := sharding.CborDataToNode(parityClusterDagBlock, "cbor")
+	if err != nil {
+		return list, fmt.Errorf("error parsing parity-clusterDAG block: %s", err)
+	}
+	for _, l := range parityClusterDagNode.Links() {
+		list = append([]api.Cid{api.NewCid(l.Cid)}, list...)
+	}
 	return list, nil
 }
 
@@ -2285,12 +2302,32 @@ func (c *Cluster) RepoGCLocal(ctx context.Context) (api.RepoGC, error) {
 	return resp, nil
 }
 
-// 1. get metadata
-// 2. get IPFS block
-// 3. construct shards
-func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) (files.Node, error) {
+func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) ([]byte, error) {
 	ctx, span := trace.StartSpan(ctx, "cluster/ECGet")
 	defer span.End()
+	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
+	// try to get file directly
+	metaBlock, err := c.ipfs.BlockGet(ctx, ci)
+	if err != nil {
+		return nil, fmt.Errorf("cid's block was not store by ipfs: %s", err)
+	}
+	metaNode, err := ipldDecoder.DecodeNode(ctx, blocks.NewBlock(metaBlock))
+	if err != nil {
+		return nil, err
+	}
+	r, err := uio.NewDagReader(ctx, metaNode, dgs)
+	if err == nil {
+		logger.Infof("read file directly successfully")
+		b, err := io.ReadAll(r)
+		if err != nil {
+			logger.Errorf("cannot read Node: %s", err)
+		}
+		goto skip
+		return b, err
+	}
+skip:
+	logger.Errorf("read file directly failed: %s, try to reconstruct", err)
+	// try to get shards and reconstruct
 	metaPin, err := c.PinGet(ctx, ci)
 	if err != nil {
 		return nil, fmt.Errorf("cid was not pinned: %s", err)
@@ -2298,102 +2335,151 @@ func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) (files.Node, error) {
 	if metaPin.Type != api.MetaType {
 		return nil, fmt.Errorf("cid not MetaPin type")
 	}
-	if metaPin.Reference == nil {
-		return nil, errors.New("metaPin.Reference is unset")
-	}
-
 	clusterPin, err := c.PinGet(ctx, *metaPin.Reference)
 	if err != nil {
-		return nil, fmt.Errorf("cluster pin was not pinned: %s", err)
+		return nil, err
 	}
-	parityPin, err := c.PinGet(ctx, *clusterPin.Reference)
+	parityCid := *clusterPin.Reference
+	vect, need, err := c.ECGetDataShards(ctx, clusterPin.Cid, dgs)
 	if err != nil {
-		return nil, fmt.Errorf("cluster pin was not pinned: %s", err)
+		return nil, err
 	}
-	dataShards, err := c.resolveCid2Link(ctx, clusterPin.Cid)
-	parityShards, err := c.resolveCid2Link(ctx, parityPin.Cid)
-
-	fileb := make([]byte, 0)
-	parityb := make([]byte, 0)
-	var ref api.Cid
-	// traverse shards in order
-	// origin shards is map[string]cid.Cid -> 0,cid0; 1,cid1
-	for _, sh := range dataShards {
-		shardPin, err := c.PinGet(ctx, api.NewCid(sh.Cid))
-		if err != nil {
-			return nil, fmt.Errorf("shard was not pinned: %s %s", sh.Cid, err)
-		}
-
-		if ref != api.CidUndef && !shardPin.Reference.Equals(ref) {
-			return nil, fmt.Errorf("ref (%s) should point to previous shard (%s)", ref, shardPin.Reference)
-		}
-		ref = shardPin.Cid
-
-		shardBlock, err := c.ipfs.BlockGet(ctx, shardPin.Cid)
-		if err != nil {
-			return nil, fmt.Errorf("shard block was not stored: %s", err)
-		}
-		shardNode, err := sharding.CborDataToNode(shardBlock, "cbor")
-		if err != nil {
-			return nil, err
-		}
-		for _, l := range shardNode.Links() {
-			ci := l.Cid
-			b, err := c.ipfs.BlockGet(ctx, api.NewCid(ci))
-			if err != nil {
-				fmt.Println("cannot get block of shard")
+	parityVect, parityNeed, err := c.ECGetParityShards(ctx, parityCid, dgs)
+	if err != nil {
+		return nil, err
+	}
+	vect = append(vect, parityVect...)
+	need = append(need, parityNeed...)
+	has := make([]int, 0, len(vect)-len(need))
+	totalsize := 0
+	// calculate total size and has slice for reconstruct
+	for i := range vect {
+		totalsize += len(vect[i])
+		n := false
+		for _, j := range need {
+			if j == i {
+				n = true
 			}
-			fileb = append(fileb, b...)
+		}
+		if !n {
+			has = append(has, i)
 		}
 	}
-	fmt.Println("size of file:", len(fileb))
-	for _, sh := range parityShards {
-		shardPin, err := c.PinGet(ctx, api.NewCid(sh.Cid))
-		if err != nil {
-			return nil, fmt.Errorf("shard was not pinned: %s %s", sh.Cid, err)
+	//err = rs.New(ctx, rs.DefaultDataShards, rs.DefaultParityShards, 0).ReConstruct(vect, has, need)
+	//if err != nil {
+	//	return nil, fmt.Errorf("error reconstructing file: %s", err)
+	//}
+	b := make([]byte, 0, totalsize) // rough estimate
+	for i, v := range vect {
+		ty := "data"
+		if i >= len(vect)-len(parityVect) {
+			ty = "parity"
 		}
-
-		if ref != api.CidUndef && !shardPin.Reference.Equals(ref) {
-			return nil, fmt.Errorf("ref (%s) should point to previous shard (%s)", ref, shardPin.Reference)
-		}
-		ref = shardPin.Cid
-
-		shardBlock, err := c.ipfs.BlockGet(ctx, shardPin.Cid)
-		if err != nil {
-			return nil, fmt.Errorf("shard block was not stored: %s", err)
-		}
-		shardNode, err := sharding.CborDataToNode(shardBlock, "cbor")
-		if err != nil {
-			return nil, err
-		}
-		for _, l := range shardNode.Links() {
-			ci := l.Cid
-			b, err := c.ipfs.BlockGet(ctx, api.NewCid(ci))
-			if err != nil {
-				fmt.Println("cannot get block of shard")
-			}
-			parityb = append(parityb, b...)
-		}
+		fmt.Printf("%s shard%d size:%d\n", ty, i, len(v))
 	}
-	fmt.Println("size of parity:", len(parityb))
-	return files.NewBytesFile(fileb), nil
+	for _, v := range vect[:len(vect)-len(parityVect)] {
+		b = append(b, v...)
+	}
+	return b, err
 }
 
-func (c *Cluster) resolveCid2Link(ctx context.Context, ci api.Cid) ([]*format.Link, error) {
-	block, err := c.ipfs.BlockGet(ctx, ci)
+// try to get shard by dag
+func (c *Cluster) ECGetDataShards(ctx context.Context, ci api.Cid, dgs format.DAGService) ([][]byte, []int, error) {
+	links, err := c.ECResolveLinks(ctx, ci) // get sorted data shards
+	if err != nil {
+		return nil, nil, err
+	}
+	vect := make([][]byte, len(links))
+	need := make([]int, 0)
+	ref := api.CidUndef
+	wg := sync.WaitGroup{}
+	wg.Add(len(links))
+	for i, sh := range links {
+		// check
+		pin, err := c.PinGet(ctx, api.NewCid(sh.Cid))
+		if err != nil {
+			need = append(need, i)
+			logger.Errorf("%dst data shard(%s) was not pinned: %s", i, sh.Cid, err)
+			wg.Done()
+			continue
+		}
+		if ref != api.CidUndef && !pin.Reference.Equals(ref) {
+			return nil, nil, fmt.Errorf("%dst data shard(%s) reference is wrong, not point to %s", i, sh.Cid, ref)
+		}
+		go func(sh *format.Link, i int) {
+			defer wg.Done()
+			shardBlock, err := c.ipfs.BlockGet(ctx, api.NewCid(sh.Cid))
+			if err != nil {
+				need = append(need, i)
+				logger.Warnf("cannot parse %dst data shard(%s): %s", i, sh.Cid, err)
+				return
+			}
+			nd, err := sharding.CborDataToNode(shardBlock, "cbor")
+			// nd, err := sh.GetNode(ctx, dgs)
+			if err != nil {
+				need = append(need, i)
+				logger.Warnf("cannot parse %dst data shard(%s) to node: %s", i, sh.Cid, err)
+				return
+			}
+			vect[i] = make([]byte, 0, len(nd.Links())*256*1024) // estimate size
+			// fetch each link
+			for _, link := range nd.Links() {
+				b, err := c.ipfs.BlockGet(ctx, api.NewCid(link.Cid))
+				if err != nil {
+					vect[i] = nil
+					need = append(need, i)
+					logger.Warnf("cannot parse %dst parity shard(%s) to rawdata: %s", i, sh.Cid, err)
+					return
+				}
+				vect[i] = append(vect[i], b...)
+			}
+		}(sh, i)
+	}
+	wg.Wait()
+	return vect, need, nil
+}
+
+func (c *Cluster) ECGetParityShards(ctx context.Context, ci api.Cid, dgs format.DAGService) ([][]byte, []int, error) {
+	links, err := c.ECResolveLinks(ctx, ci) // get sorted parity shards
+	if err != nil {
+		return nil, nil, err
+	}
+	vects := make([][]byte, len(links))
+	need := make([]int, 0)
+	wg := sync.WaitGroup{}
+	wg.Add(len(links))
+	for i, sh := range links {
+		go func(sh *format.Link, i int) {
+			defer wg.Done()
+			vects[i], err = c.link2Byte(ctx, sh, dgs)
+			if err != nil {
+				need = append(need, i)
+				vects[i] = nil
+				logger.Warnf("cannot parse %dst parity shard(%s) to rawdata: %s", i, sh.Cid, err)
+				return
+			}
+		}(sh, i)
+	}
+	wg.Wait()
+	return vects, need, nil
+}
+
+func (c *Cluster) ECResolveLinks(ctx context.Context, clusterDAG api.Cid) ([]*format.Link, error) {
+	clusterDAGBlock, err := c.ipfs.BlockGet(ctx, clusterDAG)
+	if err != nil {
+		return nil, fmt.Errorf("cluster pin(%s) was not stored: %s", clusterDAG, err)
+	}
+	clusterDAGNode, err := sharding.CborDataToNode(clusterDAGBlock, "cbor")
 	if err != nil {
 		return nil, err
 	}
-	dagNode, err := sharding.CborDataToNode(block, "cbor")
-	if err != nil {
-		return nil, err
-	}
-	shards := dagNode.Links()
-	links := make([]*format.Link, len(shards))
+
+	shards := clusterDAGNode.Links()
+	links := make([]*format.Link, 0)
 	// traverse shards in order
 	// origin shards is map[string]cid.Cid -> 0,cid0; 1,cid1
-	for i := 0; i < len(shards); i++ {
-		sh, _, err := dagNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
+	for i := range shards {
+		sh, _, err := clusterDAGNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
 		if err != nil {
 			return nil, err
 		}
@@ -2402,18 +2488,14 @@ func (c *Cluster) resolveCid2Link(ctx context.Context, ci api.Cid) ([]*format.Li
 	return links, nil
 }
 
-func (c *Cluster) ECGetBlock(ctx context.Context, ci api.Cid) (format.Node, error) {
-	ctx, span := trace.StartSpan(ctx, "cluster/ECGetBlock")
-	defer span.End()
-	b, err := c.ipfs.BlockGet(ctx, ci)
+func (c *Cluster) link2Byte(ctx context.Context, link *format.Link, dgs format.DAGService) ([]byte, error) {
+	nd, err := link.GetNode(ctx, dgs)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("starting ecgetblock decode block")
-	block := blocks.NewBlock(b)
-	nd, err := merkledag.DecodeProtobufBlock(block)
+	r, err := uio.NewDagReader(ctx, nd, dgs)
 	if err != nil {
 		return nil, err
 	}
-	return nd, nil
+	return io.ReadAll(r)
 }

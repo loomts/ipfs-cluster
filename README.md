@@ -11,11 +11,14 @@ IPFS-Cluster is a good project for data orchestration on IPFS. But it unsupport 
 This work can be devide into three part.
 1. Add, figure out how to obtain data. Because data can only be accessed once, we can only get the blocks data. So I also send blocks to Reed-Solomon when send to IPFS, When the Reed-Solomon module receive 6 data shards(configable) it will generate 3 parity shards and send them to `adder`. While adder receive parity shards, it will use single/dag_service add them to IPFS.
 2. Allocate, descide which shard send to which node. The implementation make more peers store the data shards, and more than one peer store the parity shards. See `ShardAllocate` for details. After figure who to store the shard, then use RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to **remote** or local Pin. So I open the `RPCTrusted` promission for `Cluster.Pin`.
-3. Get, Working in progress.
+3. Get, readjust the shard struct to metaPin->clusterPin->parityClusterPin, metaPin point to clusterPin, clusterPin store the data shards cids and point to parityClusterPin, parityClusterPin store the parity shards cids. when get command receive, cluster will first use simple dag get try to get all data by `BlockGet`, then send out. If cannot get all data, then get data shards and parity separately, then use reedsolomon try to reconstruct.
 
 ### TODO
-Now use the sharding dag_service to store the origin file and single dag_service to store single file. Many be is a method to combine them with a new dag_service.
-
+1. Now use the sharding dag_service to store the origin file and single dag_service to store single file. Many be is a method to combine them with a new dag_service.
+2. After reconstructing, re add the data
+3. Send parity shards to one machine by one stream 
+4. batch reconstruct
+5. check why total shard size not fit
 ---
 [![Made by](https://img.shields.io/badge/By-Protocol%20Labs-000000.svg?style=flat-square)](https://protocol.ai)
 [![Main project](https://img.shields.io/badge/project-ipfs--cluster-ef5c43.svg?style=flat-square)](http://github.com/ipfs-cluster)

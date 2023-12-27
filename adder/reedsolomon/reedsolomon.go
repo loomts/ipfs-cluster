@@ -12,7 +12,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"unsafe"
 
@@ -92,7 +91,9 @@ func New(ctx context.Context, d int, p int, shardSize int) *ReedSolomon {
 		parityLen:    0,
 		receAllData:  false,
 	}
-	go r.handleBlock()
+	if shardSize != 0 {
+		go r.handleBlock()
+	}
 	return r
 }
 
@@ -118,13 +119,11 @@ func (rs *ReedSolomon) handleBlock() {
 			rs.batchCid[rs.curShardI] = sb.Cid
 			rs.curShardI, rs.curShardJ = rs.curShardI+1, 0
 			if rs.curShardI == rs.dataShards {
-				log.Errorf("encode false")
 				rs.Encode(false)
 			}
 			rs.mu.Unlock()
 		case FileEndBlock:
 			rs.mu.Lock()
-			log.Errorf("encode true")
 			rs.Encode(true)
 			rs.mu.Unlock()
 			return
@@ -136,7 +135,6 @@ func (rs *ReedSolomon) handleBlock() {
 func (rs *ReedSolomon) Encode(isLast bool) {
 	if isLast && rs.curShardI == 0 && rs.curShardJ == 0 {
 		// no data, don't need to encode
-		log.Error("close paritych")
 		close(rs.parityCh)
 		rs.receAllData = isLast
 		return
@@ -160,14 +158,15 @@ func (rs *ReedSolomon) Encode(isLast bool) {
 		rs.parityLen += 1
 	}
 	if isLast {
-		log.Error("close paritych")
 		close(rs.parityCh)
 		rs.receAllData = isLast
 	}
 }
 
-func (rs *ReedSolomon) ReConstruct(data [][]byte, replaceRows []int, parity [][]byte) error {
-	err := rs.rs.Replace(data, replaceRows, parity)
+// vects's len=dataShards+parityShards, has is the index of correct vects and needReconst is the index of lose vect
+func (rs *ReedSolomon) ReConstruct(vects [][]byte, has []int, needReconst []int) error {
+	// TODO, batch reconstruct
+	err := rs.rs.Reconst(vects, has, needReconst)
 	if err != nil {
 		return err
 	}
@@ -195,7 +194,7 @@ func (rs *ReedSolomon) GetParityShards() map[string]cid.Cid {
 }
 
 func (rs *ReedSolomon) AddParityCid(key int, cid api.Cid) {
-	rs.parityCids[strconv.Itoa(key)] = cid.Cid
+	rs.parityCids[fmt.Sprintf("%d", key)] = cid.Cid
 }
 
 func (rs *ReedSolomon) GetParityFrom() <-chan Shard {

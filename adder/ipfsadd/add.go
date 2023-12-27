@@ -236,7 +236,6 @@ func (adder *Adder) addNode(node ipld.Node, path string) error {
 			return err
 		}
 	}
-	log.Errorf("cache %v", path)
 	if err := mfs.PutNode(mr, path, node); err != nil {
 		log.Errorf("cache %v error:%v", path, err)
 		return err

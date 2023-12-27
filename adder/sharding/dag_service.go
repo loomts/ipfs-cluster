@@ -90,6 +90,7 @@ func (dgs *DAGService) Close() error {
 	}
 	return nil
 }
+
 func (dgs *DAGService) pinShardsMeta(ctx context.Context, ref api.Cid, shard2cid map[string]cid.Cid, parity bool) (api.Cid, error) {
 	// Pin the shards DAG
 	shardsMetaDAG, err := makeDAG(ctx, shard2cid)
@@ -351,8 +352,4 @@ func (dgs *DAGService) GetRS() *rs.ReedSolomon {
 }
 
 func (dgs *DAGService) SetParity(name string) {
-	parityShards := dgs.rs.GetParityShards()
-	for s, c := range parityShards {
-		dgs.shards[s] = c
-	}
 }

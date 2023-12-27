@@ -12,17 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/ipfs-cluster/ipfs-cluster/adder/adderutils"
 	types "github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/api/common"
-	"github.com/ipfs-cluster/ipfs-cluster/getter"
-
-	"github.com/ipfs/boxo/files"
 	logging "github.com/ipfs/go-log/v2"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -866,7 +861,7 @@ func repoGCToGlobal(r types.RepoGC) types.GlobalRepoGC {
 }
 
 func (api *API) ECGetHandler(w http.ResponseWriter, r *http.Request) {
-	var nd files.Node
+	var b []byte
 	if pin := api.ParseCidOrFail(w, r); pin.Defined() {
 		err := api.rpcClient.CallContext(
 			r.Context(),
@@ -874,14 +869,18 @@ func (api *API) ECGetHandler(w http.ResponseWriter, r *http.Request) {
 			"Cluster",
 			"ECGet",
 			pin.Cid,
-			&nd,
+			&b,
 		)
+
 		if err != nil {
 			api.SendResponse(w, common.SetStatusAutomatically, err, nil)
 			return
 		}
-		p, _ := os.Getwd()
-		err = getter.WriteFile(nd, filepath.Join(p, pin.Cid.String()), true)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "close")
+		enc := json.NewEncoder(w)
+		enc.Encode(b)
 		api.SendResponse(w, common.SetStatusAutomatically, err, nil)
 	} else {
 		api.SendResponse(w, common.SetStatusAutomatically, errors.New("incorrect cid"), nil)
