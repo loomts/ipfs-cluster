@@ -6,13 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"io"
 	"mime/multipart"
 	"strings"
 	"sync"
 
 	"github.com/ipfs-cluster/ipfs-cluster/adder/ipfsadd"
-	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs/boxo/ipld/unixfs"
 	"github.com/ipld/go-car"
@@ -67,7 +67,7 @@ type ClusterDAGService interface {
 	// for the added content.
 	Allocations() []peer.ID
 
-	GetRS() *rs.ReedSolomon
+	GetRS() *ec.ReedSolomon
 
 	// SetParity for single.dag_service: sets the parity shard name, for sharding.dag_service:
 	// add the parity metadata to cluster DAG
@@ -179,7 +179,7 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 				logger.Errorf("error creating dag formatter: %s", err)
 			}
 			for {
-				parity := <-a.dgs.GetRS().GetParityFrom()
+				parity := <-a.dgs.GetRS().GetParity()
 				logger.Infof("receive parity: %s", parity.Name)
 				if parity.Name == "" { // channel closed
 					return
@@ -252,7 +252,7 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 			return lastCid, err
 		}
 		if a.params.Erasure {
-			a.dgs.GetRS().SendBlockTo() <- rs.StatBlock{Stat: rs.FileEndBlock}
+			a.dgs.GetRS().SendBlockTo() <- ec.StatBlock{Stat: ec.FileEndBlock}
 		}
 		if !lastCid.Equals(adderRoot) {
 			// TODO: sometime it's not the same, check why

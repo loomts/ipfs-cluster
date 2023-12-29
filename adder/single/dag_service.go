@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	adder "github.com/ipfs-cluster/ipfs-cluster/adder"
-	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
+	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
 	cid "github.com/ipfs/go-cid"
@@ -90,7 +90,7 @@ func (dgs *DAGService) Add(ctx context.Context, node ipld.Node) error {
 
 		if dgs.addParams.Erasure {
 			// this sets allocations as single peer
-			allocation, err := adder.ShardAllocate(dests, rs.DefaultDataShards, rs.DefaultParityShards, dgs.parityIdx, false)
+			allocation, err := adder.ShardAllocate(dests, ec.DefaultDataShards, ec.DefaultParityShards, dgs.parityIdx, false)
 			if err != nil {
 				return fmt.Errorf("parity shard allocation %d: %s", dgs.parityIdx, err)
 			}
@@ -210,7 +210,7 @@ func (rc *recentBlocks) Has(n ipld.Node) bool {
 	return rc.blocks[0].Equals(c) || rc.blocks[1].Equals(c)
 }
 
-func (dgs *DAGService) GetRS() *rs.ReedSolomon {
+func (dgs *DAGService) GetRS() *ec.ReedSolomon {
 	return nil // never use single dag_service to get rs
 }
 

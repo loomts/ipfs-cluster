@@ -49,7 +49,7 @@ var DefaultRPCPolicy = map[string]RPCEndpointType{
 	"PinTracker.Untrack":      RPCClosed,
 
 	// IPFSConnector methods
-	"IPFSConnector.BlockGet":    RPCTrusted,
+	"IPFSConnector.BlockGet":    RPCClosed,
 	"IPFSConnector.BlockStream": RPCTrusted, // Called by adders
 	"IPFSConnector.ConfigKey":   RPCClosed,
 	"IPFSConnector.Pin":         RPCClosed,

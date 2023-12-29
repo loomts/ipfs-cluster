@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"mime/multipart"
 	"sync"
 	"testing"
 	"time"
 
-	rs "github.com/ipfs-cluster/ipfs-cluster/adder/reedsolomon"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/test"
 	"github.com/ipld/go-car"
@@ -45,7 +45,7 @@ func (dgs *mockCDAGServ) Allocations() []peer.ID {
 	return nil
 }
 
-func (dgs *mockCDAGServ) GetRS() *rs.ReedSolomon {
+func (dgs *mockCDAGServ) GetRS() *ec.ReedSolomon {
 	return nil
 }
 

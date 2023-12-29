@@ -4,7 +4,7 @@
 2. Change the `Cluster.Pin` RPC promission to RPCTrusted in order to Pin Peers.
 
 ### Motivation
-IPFS-Cluster is a good project for data orchestration on IPFS. But it unsupport erasure coding, which means that we should use multiple memory to fault tolerance. But it can be solve by adding a [Reed-Solomon]() layer. But Unforunterly, there is also something wrong with IFPS-Cluster sharding, see [discuss](https://discuss.ipfs.tech/t/ipfs-cluster-sharding-and-recursive-partial-pin/8035).
+IPFS-Cluster is a good project for data orchestration on IPFS. But it unsupport erasure coding, which means that we should use multiple memory to fault tolerance. But it can be solved by adding a [Reed-Solomon](https://github.com/klauspost/reedsolomon) layer. See [discuss](https://discuss.ipfs.tech/t/is-there-an-implementation-of-ipfs-that-includes-erasure-coding-like-reed-solomon-right-now/17052/9).
 
 ### Overview
 
