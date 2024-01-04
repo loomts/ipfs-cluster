@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"io"
 	"mime/multipart"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
+
+	"github.com/ipfs/boxo/files"
 	uio "github.com/ipfs/boxo/ipld/unixfs/io"
 	blocks "github.com/ipfs/go-block-format"
 
@@ -2326,11 +2330,13 @@ skip:
 		return nil, err
 	}
 	dataShardSize := clusterPin.Metadata
-	dataVects, parityVects, err := c.ECGetShards(ctx, clusterPin.Cid, len(dataShardSize), dgs)
+	dataVects, parityVects, need, err := c.ECGetShards(ctx, clusterPin.Cid, len(dataShardSize), dgs)
 	if err != nil {
 		return nil, err
 	}
-
+	for i, d := range dataVects {
+		logger.Errorf("dataVect[%d] len:%d", i, len(d))
+	}
 	// nil or empty vects means that the shards are needed to be reconstructed
 	// dataShardSize used to confirm the original size of dataShards
 	dShardSize := make([]int, len(dataShardSize))
@@ -2349,6 +2355,7 @@ skip:
 	if err != nil {
 		return nil, fmt.Errorf("error reconstructing file: %s", err)
 	}
+	go c.reAllocate(ctx, metaPin, dataVects, parityVects, need)
 	b := make([]byte, 0, len(dataVects[0])*ec.DefaultDataShards)
 	for _, v := range dataVects {
 		b = append(b, v...)
@@ -2357,28 +2364,28 @@ skip:
 }
 
 // try to get shard by dag
-func (c *Cluster) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum int, dgs format.DAGService) ([][]byte, [][]byte, error) {
+func (c *Cluster) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum int, dgs format.DAGService) ([][]byte, [][]byte, []int, error) {
 	dataLinks, parityLinks, err := c.ECResolveLinks(ctx, ci, dataShardNum) // get sorted data shards
 	if err != nil {
-		return nil, nil, err
+		logger.Error(err)
+	}
+	for i := 0; i < len(dataLinks); i++ {
+		if dataLinks[i] == nil {
+			logger.Errorf("dataLinks[%d] is nil", i)
+		}
+	}
+	for i := 0; i < len(parityLinks); i++ {
+		if parityLinks[i] == nil {
+			logger.Errorf("parityLinks[%d] is nil", i)
+		}
 	}
 	dataVects := make([][]byte, len(dataLinks))
 	parityVects := make([][]byte, len(parityLinks))
-	ref := api.CidUndef
+	need := make([]int, 0)
 	wg := sync.WaitGroup{}
 	wg.Add(len(dataLinks) + len(parityLinks))
 
 	for i, sh := range dataLinks {
-		// check ref
-		pin, err := c.PinGet(ctx, api.NewCid(sh.Cid))
-		if err != nil {
-			logger.Errorf("%dst data shard(%s) was not pinned: %s", i, sh.Cid, err)
-			wg.Done()
-			continue
-		}
-		if ref != api.CidUndef && !pin.Reference.Equals(ref) {
-			return nil, nil, fmt.Errorf("%dst data shard(%s) reference is wrong, not point to %s", i, sh.Cid, ref)
-		}
 		go func(sh *format.Link, i int) {
 			defer wg.Done()
 			shardBlock, err := c.ipfs.BlockGet(ctx, api.NewCid(sh.Cid))
@@ -2394,9 +2401,14 @@ func (c *Cluster) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum int,
 			dataVects[i] = make([]byte, 0, len(nd.Links())*256*1024) // estimate size
 			// fetch each link
 			for _, link := range nd.Links() {
+				if strings.HasPrefix(link.Cid.String(), "Qm") {
+					// V0 cid("Qm...") is not data block
+					continue
+				}
 				b, err := c.ipfs.BlockGet(ctx, api.NewCid(link.Cid))
 				if err != nil {
 					dataVects[i] = nil
+					need = append(need, i)
 					logger.Warnf("cannot parse %dst parity shard(%s) to rawdata: %s", i, sh.Cid, err)
 					return
 				}
@@ -2409,13 +2421,14 @@ func (c *Cluster) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum int,
 			defer wg.Done()
 			parityVects[i], err = c.link2Byte(ctx, sh, dgs)
 			if err != nil {
+				need = append(need, i)
 				logger.Warnf("cannot parse %dst parity shard(%s) to rawdata: %s", i, sh.Cid, err)
 				return
 			}
 		}(sh, i)
 	}
 	wg.Wait()
-	return dataVects, parityVects, nil
+	return dataVects, parityVects, need, nil
 }
 
 func (c *Cluster) ECResolveLinks(ctx context.Context, clusterDAG api.Cid, dataShardLen int) ([]*format.Link, []*format.Link, error) {
@@ -2429,27 +2442,20 @@ func (c *Cluster) ECResolveLinks(ctx context.Context, clusterDAG api.Cid, dataSh
 	}
 
 	shards := clusterDAGNode.Links()
-	dataLinks := make([]*format.Link, 0, dataShardLen)
-	parityLinks := make([]*format.Link, 0, len(shards)-dataShardLen)
+	links := make([]*format.Link, 0, len(shards))
+	errs := errors.New("")
 	// traverse shards in order
-	// data shards -> 0,cid0 of data shard
-	// parity shards -> parity-0,cid0 of parity shard
-
-	for i := 0; i < dataShardLen; i++ {
+	// shards -> 0,cid0
+	for i := 0; i < len(shards); i++ {
 		sh, _, err := clusterDAGNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
 		if err != nil {
-			return nil, nil, err
+			err = fmt.Errorf("cannot resolve %dst data shard: %s", i, err)
+			errors.Join(errs, err)
 		}
-		dataLinks = append(dataLinks, sh)
+		fmt.Printf("shard%d->%+v\n", i, sh)
+		links = append(links, sh)
 	}
-	for i := 0; i < len(shards)-dataShardLen; i++ {
-		sh, _, err := clusterDAGNode.ResolveLink([]string{fmt.Sprintf("parity-%d", i)})
-		if err != nil {
-			return nil, nil, err
-		}
-		parityLinks = append(parityLinks, sh)
-	}
-	return dataLinks, parityLinks, nil
+	return links[:dataShardLen:dataShardLen], links[dataShardLen:], errs
 }
 
 func (c *Cluster) link2Byte(ctx context.Context, link *format.Link, dgs format.DAGService) ([]byte, error) {
@@ -2462,4 +2468,57 @@ func (c *Cluster) link2Byte(ctx context.Context, link *format.Link, dgs format.D
 		return nil, err
 	}
 	return io.ReadAll(r)
+}
+
+// TODO
+func (c *Cluster) reAllocate(ctx context.Context, prev api.Pin, dataVects [][]byte, parityVects [][]byte, need []int) {
+	if len(need) == 0 {
+		return
+	}
+	peers := prev.Allocations
+	sort.Ints(need)
+	if need[0] < len(dataVects) {
+		// need to re add file
+		shardAddParam := api.DefaultAddParams()
+		shardAddParam.Shard = true
+		shardAddParam.Erasure = false
+		shardAddParam.ReplicationFactorMin = 1
+		shardAddParam.ReplicationFactorMax = 1
+		shardAddParam.ShardSize = uint64(len(dataVects[0]))
+		data := make([]byte, 0, len(dataVects[0])*len(dataVects))
+		for i := 0; i < len(dataVects); i++ {
+			data = append(data, dataVects[i]...)
+		}
+		mapDir := files.NewMapDirectory(map[string]files.Node{prev.Name: files.NewBytesFile(data)})
+
+		r := files.NewMultiFileReader(mapDir, true, false)
+		mr := multipart.NewReader(r, r.Boundary())
+		ci, err := c.AddFile(ctx, mr, shardAddParam)
+		if err != nil {
+			logger.Error(err)
+		}
+		logger.Infof("reallocated sharding datafile %s to %s", prev.Cid, ci)
+	}
+	for _, id := range need {
+		if id >= len(dataVects) {
+			p, err := adder.ShardAllocate(peers, len(dataVects), len(parityVects), id, false)
+			if err != nil {
+				logger.Errorf("cannot allocate shard: %s", err)
+				continue
+			}
+			params := api.DefaultAddParams()
+			params.UserAllocations = []peer.ID{p}
+			mapDir := files.NewMapDirectory(map[string]files.Node{fmt.Sprintf("%s-parity-shard-%d", prev.Name, id-len(dataVects)): files.NewBytesFile(parityVects[id-len(dataVects)])})
+			r := files.NewMultiFileReader(mapDir, true, false)
+			mr := multipart.NewReader(r, r.Boundary())
+			ci, err := c.AddFile(ctx, mr, api.AddParams{})
+			if err != nil {
+				logger.Error(err)
+			}
+			logger.Infof("reallocated parity shard-%d %s", id-len(dataVects), ci)
+		}
+	}
+	// TODO record metadata to clusterDAG
+	clusterDAGCid := *prev.Reference
+	c.unpinClusterDag(ctx, api.PinCid(clusterDAGCid))
 }

@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"time"
 
@@ -49,7 +51,6 @@ type DAGService struct {
 
 	startTime time.Time
 	totalSize uint64
-
 	// erasure coding
 	rs *ec.ReedSolomon
 }
@@ -95,12 +96,14 @@ func (dgs *DAGService) Close() error {
 // with the meta pin for the root node of the content.
 func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid, error) {
 	shardMeta := make(map[string]cid.Cid, len(dgs.shards))
-	var id string
-	for id, shardMeta[id] = range dgs.shards {
+	for i, ci := range dgs.shards {
+		shardMeta[i] = ci
 	}
 	if dgs.addParams.Erasure {
-		parityCids := dgs.rs.GetParityShards() // erasure: first pin parity shards then pin data shards and ref to parity shards.
-		for id, shardMeta[id] = range parityCids {
+		parityCids := dgs.rs.GetParityShards()
+		for id, ci := range parityCids {
+			i, _ := strconv.Atoi(id)
+			shardMeta[fmt.Sprintf("%d", i+len(dgs.shards))] = ci
 		}
 	}
 	// clusterDAG
@@ -230,7 +233,8 @@ func (dgs *DAGService) ingestBlock(ctx context.Context, n ipld.Node) error {
 	// add the block to it if it fits and return
 	if shard.Size()+size < shard.Limit() {
 		shard.AddLink(ctx, n.Cid(), size)
-		if dgs.addParams.Erasure {
+		if dgs.addParams.Erasure && !strings.HasPrefix(n.Cid().String(), "Qm") {
+			// V0 cid("Qm...") is not data block
 			dgs.rs.SendBlockTo() <- ec.StatBlock{Node: n, Stat: ec.DefaultBlock}
 		}
 		return dgs.currentShard.sendBlock(ctx, n)

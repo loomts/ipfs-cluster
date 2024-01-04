@@ -202,7 +202,7 @@ func (r *ReedSolomon) GetParityShards() map[string]cid.Cid {
 }
 
 func (r *ReedSolomon) AddParityCid(key int, cid api.Cid) {
-	r.parityCids[fmt.Sprintf("parity-%d", key)] = cid.Cid
+	r.parityCids[fmt.Sprintf("%d", key)] = cid.Cid
 }
 
 func (r *ReedSolomon) GetDataShardSize() map[string]uint64 {

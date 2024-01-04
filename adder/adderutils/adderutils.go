@@ -35,7 +35,6 @@ func AddMultipartHTTPHandler(
 	output := make(chan api.AddedOutput, 200)
 
 	if params.Shard {
-		params.Erasure = true
 		dags = sharding.New(ctx, rpc, params, output)
 	} else {
 		dags = single.New(ctx, rpc, params, params.Local)

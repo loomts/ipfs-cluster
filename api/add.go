@@ -171,7 +171,13 @@ func AddParamsFromQuery(query url.Values) (AddParams, error) {
 	if err != nil {
 		return params, err
 	}
-
+	err = parseBoolParam(query, "erasure", &params.Erasure)
+	if err != nil {
+		return params, err
+	}
+	if params.Erasure && params.Shard {
+		params.RawLeaves = true
+	}
 	err = parseBoolParam(query, "progress", &params.Progress)
 	if err != nil {
 		return params, err
@@ -224,6 +230,7 @@ func (p AddParams) ToQueryString() (string, error) {
 		return "", err
 	}
 	query.Set("shard", fmt.Sprintf("%t", p.Shard))
+	query.Set("erasure", fmt.Sprintf("%t", p.Erasure))
 	query.Set("local", fmt.Sprintf("%t", p.Local))
 	query.Set("recursive", fmt.Sprintf("%t", p.Recursive))
 	query.Set("layout", p.Layout)

@@ -470,6 +470,10 @@ automatically generated.
 					Value: defaultAddParams.ShardSize,
 					Usage: "Sets the maximum replication factor for pinning this file",
 				},
+				cli.BoolFlag{
+					Name:  "erasure",
+					Usage: "when shard is enabled, use erasure coding make redundancy shards and enable reconstruct this file",
+				},
 				//TODO: Figure progress over total bar.
 				//cli.BoolFlag{
 				//	Name:  "progress, p",
@@ -516,6 +520,7 @@ automatically generated.
 				p.NoPin = c.Bool("no-pin")
 				p.Format = c.String("format")
 				p.Shard = shard
+				p.Erasure = p.Shard && c.Bool("erasure")
 				p.ShardSize = c.Uint64("shard-size")
 				p.Recursive = c.Bool("recursive")
 				p.Local = c.Bool("local")
@@ -529,7 +534,7 @@ automatically generated.
 				if p.HashFun != defaultAddParams.HashFun {
 					p.CidVersion = 1
 				}
-				if p.CidVersion > 0 {
+				if p.CidVersion > 0 || p.Erasure {
 					p.RawLeaves = true
 				}
 				p.NoCopy = c.Bool("nocopy")

@@ -6,12 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"io"
 	"mime/multipart"
 	"strings"
 	"sync"
 
+	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"github.com/ipfs-cluster/ipfs-cluster/adder/ipfsadd"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs/boxo/ipld/unixfs"
@@ -185,7 +185,7 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 					return
 				}
 				pf := files.NewBytesFile(parity.RawData)
-				a.dgs2.SetParity(parity.Name)
+				a.dgs2.SetParity(a.params.Name + "-" + parity.Name)
 				parityRoot, err := dagFmtr2.Add(parity.Name, pf)
 				if err != nil {
 					logger.Error("error adding parity to cluster: ", err)
