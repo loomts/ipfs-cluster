@@ -258,6 +258,7 @@ func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dS
 			}
 			// remove diff
 			for j := 0; j < len(dVects); j++ {
+				fmt.Println("after reconstruct: len:", len(vects[j]), "cap:", cap(vects[j]), "perv size:", dSize[j])
 				dVects[j] = vects[j][:dSize[j]]
 			}
 			for j := 0; j < len(pVects); j++ {

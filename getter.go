@@ -113,10 +113,11 @@ func sendOrDone(ctx context.Context, out chan<- *format.NodeOption, no *format.N
 
 func (ds *dagSession) decode(ctx context.Context, rawb []byte) (format.Node, error) {
 	b := blocks.NewBlock(rawb)
-	nd, err := ipldDecoder.DecodeNode(ctx, b) // TODO figure out why sharding block cannot decode: (PBNode) invalid wireType, expected 2, got 3
+	nd, err := ipldDecoder.DecodeNode(ctx, b) // TODO figure out why sharding block cannot decode: (PBNode) invalid wireType, expected 2, got ?
 	if err != nil {
 		logger.Warnf("Failed to decode block: %s", err)
 		return nil, err
 	}
 	return nd, err
+	// return merkledag.DecodeProtobuf(rawb)
 }
