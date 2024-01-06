@@ -6,7 +6,7 @@ require (
 	dario.cat/mergo v1.0.0
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/cheggaaa/pb v1.0.29
-	github.com/cockroachdb/pebble v0.0.0-20230227185959-8285e8dd5c08
+	github.com/cockroachdb/pebble v0.0.0-20231122205016-4cbc644681f2
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/dgraph-io/badger v1.6.2
 	github.com/dgraph-io/badger/v3 v3.2103.5
@@ -161,8 +161,9 @@ require (
 	github.com/libp2p/go-yamux/v4 v4.0.1 // indirect
 	github.com/libp2p/zeroconf/v2 v2.2.0 // indirect
 	github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd // indirect
-	github.com/mattn/go-colorable v0.1.12 // indirect
-	github.com/mattn/go-isatty v0.0.19 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-runewidth v0.0.4 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/miekg/dns v1.1.55 // indirect
 	github.com/mikioh/tcpinfo v0.0.0-20190314235526-30a79bb1804b // indirect
@@ -191,7 +192,6 @@ require (
 	github.com/quic-go/quic-go v0.38.1 // indirect
 	github.com/quic-go/webtransport-go v0.5.3 // indirect
 	github.com/raulk/go-watchdog v1.3.0 // indirect
-	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
@@ -225,4 +225,6 @@ require (
 	lukechampine.com/blake3 v1.2.1 // indirect
 )
 
-go 1.20
+go 1.21
+
+toolchain go1.21.4
