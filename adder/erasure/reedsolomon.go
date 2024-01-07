@@ -24,8 +24,6 @@ var log = logging.Logger("erasure")
 type BlockStat string
 
 const (
-	DefaultDataShards   = 6
-	DefaultParityShards = 3
 	DefaultBlock        = BlockStat("defaultBlock")
 	ShardEndBlock       = BlockStat("shardEndBlock")
 	FileEndBlock        = BlockStat("fileEndBlock")

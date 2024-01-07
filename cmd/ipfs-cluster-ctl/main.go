@@ -492,9 +492,18 @@ automatically generated.
 				},
 				cli.BoolFlag{
 					Name:  "erasure",
-					Usage: "when shard is enabled, use erasure coding make redundancy shards and enable reconstruct this file",
+					Usage: "Use erasure coding make redundancy shards and enable reconstruct this file",
 				},
-				//TODO: Figure progress over total bar.
+				cli.IntFlag{
+					Name:  "data-shards",
+					Value: defaultAddParams.DataShards,
+					Usage: "Sets the number of data shards for erasure coding",
+				},
+				cli.IntFlag{
+					Name:  "parity-shards",
+					Value: defaultAddParams.ParityShards,
+					Usage: "Sets the number of parity shards for erasure coding",
+				},
 				//cli.BoolFlag{
 				//	Name:  "progress, p",
 				//	Usage: "Stream progress data",
@@ -541,6 +550,8 @@ automatically generated.
 				p.Format = c.String("format")
 				p.Shard = shard
 				p.Erasure = p.Shard && c.Bool("erasure")
+				p.DataShards = c.Int("data-shards")
+				p.ParityShards = c.Int("parity-shards")
 				p.ShardSize = c.Uint64("shard-size")
 				p.Recursive = c.Bool("recursive")
 				p.Local = c.Bool("local")

@@ -90,7 +90,7 @@ func (dgs *DAGService) Add(ctx context.Context, node ipld.Node) error {
 
 		if dgs.addParams.Erasure {
 			// this sets allocations as single peer
-			allocation, err := adder.ShardAllocate(dests, ec.DefaultDataShards, ec.DefaultParityShards, dgs.parityIdx, false)
+			allocation, err := adder.ShardAllocate(dests, dgs.addParams.DataShards, dgs.addParams.ParityShards, dgs.parityIdx, false)
 			if err != nil {
 				return fmt.Errorf("parity shard allocation %d: %s", dgs.parityIdx, err)
 			}

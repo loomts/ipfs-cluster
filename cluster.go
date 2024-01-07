@@ -2301,7 +2301,7 @@ func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) ([]byte, error) {
 	if need {
 		_, err = c.ECReAllocate(ctx, ci, b)
 		if err != nil {
-			logger.Errorf("ReAllocate failed: %s", err)
+			logger.Errorf("error ECReAllocate failed: %s", err)
 		}
 	}
 	return b, err
@@ -2339,12 +2339,12 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 			}
 			dShardSize[i] = sz
 		}
-		err = ec.New(ctx, ec.DefaultDataShards, ec.DefaultParityShards, 0).SplitAndRecon(dataVects, parityVects, dShardSize)
+		err = ec.New(ctx, metaPin.DataShards, metaPin.ParityShards, 0).SplitAndRecon(dataVects, parityVects, dShardSize)
 		if err != nil {
 			return nil, false, err
 		}
 	}
-	b := make([]byte, 0, len(dataVects[0])*ec.DefaultDataShards)
+	b := make([]byte, 0, len(dataVects[0])*len(dataVects))
 	for _, v := range dataVects {
 		b = append(b, v...)
 	}
@@ -2384,6 +2384,8 @@ func (c *Cluster) ECReAllocate(ctx context.Context, prevCid api.Cid, data []byte
 	shardAddParam.Erasure = true
 	shardAddParam.RawLeaves = true
 	shardAddParam.Name = prev.Name
+	shardAddParam.DataShards = prev.DataShards
+	shardAddParam.ParityShards = prev.ParityShards
 	shardAddParam.ReplicationFactorMin = prev.ReplicationFactorMin
 	shardAddParam.ReplicationFactorMax = prev.ReplicationFactorMax
 	shardAddParam.ShardSize = prev.ShardSize

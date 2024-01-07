@@ -758,6 +758,8 @@ type PinOptions struct {
 	Name                 string            `json:"name" codec:"n,omitempty"`
 	Mode                 PinMode           `json:"mode" codec:"o,omitempty"`
 	ShardSize            uint64            `json:"shard_size" codec:"s,omitempty"`
+	DataShards           int               `json:"data_shards" codec:"ds,omitempty"`
+	ParityShards         int               `json:"parity_shards" codec:"ps,omitempty"`
 	UserAllocations      []peer.ID         `json:"user_allocations" codec:"ua,omitempty"`
 	ExpireAt             time.Time         `json:"expire_at" codec:"e,omitempty"`
 	Metadata             map[string]string `json:"metadata" codec:"m,omitempty"`

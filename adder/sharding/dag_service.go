@@ -68,7 +68,7 @@ func New(ctx context.Context, rpc *rpc.Client, opts api.AddParams, out chan<- ap
 		addedSet:  cid.NewSet(),
 		shards:    make(map[string]cid.Cid),
 		startTime: time.Now(),
-		rs:        ec.New(ctx, ec.DefaultDataShards, ec.DefaultParityShards, int(opts.ShardSize)),
+		rs:        ec.New(ctx, opts.DataShards, opts.ParityShards, int(opts.ShardSize)),
 	}
 }
 

@@ -12,6 +12,8 @@ import (
 
 // DefaultShardSize is the shard size for params objects created with DefaultParams().
 var DefaultShardSize = uint64(100 * 1024 * 1024) // 100 MB
+var DefaultDataShards = 6
+var DefaultParityShards = 3
 
 // AddedOutput carries information for displaying the standard ipfs output
 // indicating a node of a file has been added.
@@ -72,6 +74,8 @@ func DefaultAddParams() AddParams {
 			Name:                 "",
 			Mode:                 PinModeRecursive,
 			ShardSize:            DefaultShardSize,
+			DataShards:           DefaultDataShards,
+			ParityShards:         DefaultParityShards,
 			Metadata:             make(map[string]string),
 			Origins:              nil,
 		},
@@ -178,6 +182,14 @@ func AddParamsFromQuery(query url.Values) (AddParams, error) {
 	if params.Erasure && params.Shard {
 		params.RawLeaves = true
 	}
+	err = parseIntParam(query, "data-shards", &params.DataShards)
+	if err != nil {
+		return params, err
+	}
+	err = parseIntParam(query, "parity-shards", &params.ParityShards)
+	if err != nil {
+		return params, err
+	}
 	err = parseBoolParam(query, "progress", &params.Progress)
 	if err != nil {
 		return params, err
@@ -231,6 +243,8 @@ func (p AddParams) ToQueryString() (string, error) {
 	}
 	query.Set("shard", fmt.Sprintf("%t", p.Shard))
 	query.Set("erasure", fmt.Sprintf("%t", p.Erasure))
+	query.Set("data-shards", fmt.Sprintf("%d", p.DataShards))
+	query.Set("parity-shards", fmt.Sprintf("%d", p.ParityShards))
 	query.Set("local", fmt.Sprintf("%t", p.Local))
 	query.Set("recursive", fmt.Sprintf("%t", p.Recursive))
 	query.Set("layout", p.Layout)
@@ -254,6 +268,9 @@ func (p AddParams) Equals(p2 AddParams) bool {
 		p.Local == p2.Local &&
 		p.Recursive == p2.Recursive &&
 		p.Shard == p2.Shard &&
+		p.Erasure == p2.Erasure &&
+		p.DataShards == p2.DataShards &&
+		p.ParityShards == p2.ParityShards &&
 		p.Layout == p2.Layout &&
 		p.Chunker == p2.Chunker &&
 		p.RawLeaves == p2.RawLeaves &&

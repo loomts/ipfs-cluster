@@ -3,7 +3,6 @@ package sharding
 import (
 	"context"
 	"fmt"
-	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"sync"
 
 	"github.com/ipfs-cluster/ipfs-cluster/adder"
@@ -40,7 +39,7 @@ func newShard(globalCtx context.Context, ctx context.Context, rpc *rpc.Client, o
 	allocs, err := adder.BlockAllocate(ctx, rpc, opts)
 	if erasure {
 		// select one peer to send shard
-		allocation, err := adder.ShardAllocate(allocs, ec.DefaultDataShards, ec.DefaultParityShards, idx, true)
+		allocation, err := adder.ShardAllocate(allocs, opts.DataShards, opts.ParityShards, idx, true)
 		if err != nil {
 			return nil, fmt.Errorf("shardsAllocate %d: %s", idx, err)
 		}
