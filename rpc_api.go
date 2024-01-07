@@ -451,6 +451,11 @@ func (rpcapi *ClusterRPCAPI) ECGet(ctx context.Context, in api.Cid, out *[]byte)
 	return nil
 }
 
+// ECRecovery scan Erasure Coding files and reconstuct them
+func (rpcapi *ClusterRPCAPI) ECRecovery(ctx context.Context, in <-chan struct{}, out chan<- api.Pin) error {
+	return rpcapi.c.ECRecovery(ctx, out)
+}
+
 /*
    Tracker component methods
 */

@@ -14,7 +14,7 @@ This work can be divided into three parts.
 3. Get data or reconstruct, first make clusterPin store the cid of data and parity shards and data shards' size(when erasure coding). metaPin(rootPin) points to clusterPin. when get command received, cluster will first use simple dag try to get all data by traversal and `BlockGet`. If it cannot get all data, then try to get data and parity shards separately, finally use reedsolomon reconstruct.
 
 ### TODO
-1. Batch recovery(make a goroutine to recovery and provide a method and expose).
+1. Enable special erasure coding ratios
 2. Send parity shards to one machine by one stream.
 3. Now use the sharding dag_service to store the origin file and single dag_service to store single file, need to make a new adder module combine it.
 4. ECGet only can get data with one loop of links, not enable dfs, need to make large sharding and test.

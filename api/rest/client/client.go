@@ -81,6 +81,9 @@ type Client interface {
 
 	// ECGet download the erasure coding file of given cid
 	ECGet(ctx context.Context, ci api.Cid) error
+	// ECRecovery scan pinned files and try to reconstruct and repin them
+	ECRecovery(ctx context.Context, out chan<- api.Pin) error
+
 	// Status returns the current ipfs state for a given Cid. If local is true,
 	// the information affects only the current peer, otherwise the information
 	// is fetched from all cluster peers.

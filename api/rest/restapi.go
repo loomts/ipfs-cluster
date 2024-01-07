@@ -209,6 +209,12 @@ func (api *API) routes(c *rpc.Client) []common.Route {
 			Pattern:     "/ecget/{hash}",
 			HandlerFunc: api.ECGetHandler,
 		},
+		{
+			Name:        "ECRecovery",
+			Method:      "POST",
+			Pattern:     "/ecrecovery",
+			HandlerFunc: api.ECRecoveryHandler,
+		},
 	}
 }
 
@@ -885,4 +891,43 @@ func (api *API) ECGetHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		api.SendResponse(w, common.SetStatusAutomatically, errors.New("incorrect cid"), nil)
 	}
+}
+
+func (api *API) ECRecoveryHandler(w http.ResponseWriter, r *http.Request) {
+	in := make(chan struct{})
+	close(in)
+
+	out := make(chan types.Pin, common.StreamChannelSize)
+	errCh := make(chan error, 1)
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	go func() {
+		defer close(errCh)
+		errCh <- api.rpcClient.Stream(
+			r.Context(),
+			"",
+			"Cluster",
+			"ECRecovery",
+			in,
+			out,
+		)
+	}()
+
+	iter := func() (interface{}, bool, error) {
+		var p types.Pin
+		var ok bool
+	iterloop:
+		for {
+			select {
+			case <-ctx.Done():
+				break iterloop
+			case p, ok = <-out:
+				break iterloop
+			}
+		}
+		return p, ok, ctx.Err()
+	}
+	api.StreamResponse(w, iter, errCh)
 }

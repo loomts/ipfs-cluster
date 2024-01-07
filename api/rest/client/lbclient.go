@@ -573,3 +573,12 @@ func (lc *loadBalancingClient) ECGet(ctx context.Context, cid api.Cid) error {
 	err := lc.retry(0, call)
 	return err
 }
+
+func (lc *loadBalancingClient) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
+	call := func(c Client) error {
+		err := c.ECRecovery(ctx, out)
+		return err
+	}
+	err := lc.retry(0, call)
+	return err
+}

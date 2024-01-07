@@ -288,9 +288,9 @@ cluster peers.
 			Usage:     "Get a file or directory from ipfs-cluster(only support Erasure Coding file)",
 			ArgsUsage: "<CID>",
 			Description: `
-You can use IPFS get instead of IPFS-Cluster if you do not use Erasure Coding.
 This command will download the file from peers and reconstruct it locally 
 then check the integrity of the file and return.
+P.S. You can use ipfs get instead of ipfs-cluster-ctl ecget if you do not use Erasure Coding.
 `,
 			Flags: []cli.Flag{},
 			Action: func(c *cli.Context) error {
@@ -303,6 +303,26 @@ then check the integrity of the file and return.
 				} else {
 					checkErr("", errors.New("need a cid"))
 				}
+				return nil
+			},
+		},
+		{
+			Name:  "ecrecovery",
+			Usage: "Recover all Erasure Coding file pinned in the cluster",
+			Description: `
+This command will scan all files and try to reconstruct broken files and repin them to cluster.
+	`,
+			Flags: []cli.Flag{},
+			Action: func(c *cli.Context) error {
+				recovered := make(chan api.Pin, 1024)
+				errCh := make(chan error, 1)
+				go func() {
+					defer close(errCh)
+					errCh <- globalClient.ECRecovery(ctx, recovered)
+				}()
+				formatResponse(c, recovered, nil)
+				err := <-errCh
+				formatResponse(c, nil, err)
 				return nil
 			},
 		},

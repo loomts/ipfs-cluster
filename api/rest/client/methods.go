@@ -748,3 +748,21 @@ func writeFile(b []byte, fpath string, progress bool) error {
 	}
 	return nil
 }
+
+func (c *defaultClient) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
+	ctx, span := trace.StartSpan(ctx, "client/ECRecovery")
+	defer span.End()
+
+	defer close(out)
+	handler := func(dec *json.Decoder) error {
+		var obj api.Pin
+		err := dec.Decode(&obj)
+		if err != nil {
+			return err
+		}
+		out <- obj
+		return nil
+	}
+
+	return c.doStream(ctx, "POST", fmt.Sprintf("/ecrecovery"), nil, nil, handler)
+}

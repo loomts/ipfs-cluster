@@ -20,6 +20,7 @@ var DefaultRPCPolicy = map[string]RPCEndpointType{
 	"Cluster.PeersWithFilter":      RPCClosed,
 	"Cluster.Pin":                  RPCTrusted, // Used by Erasure Coding, pin to peers
 	"Cluster.ECGet":                RPCClosed,  // Used by Erasure Coding, get file from local and peers
+	"Cluster.ECRecovery":           RPCClosed,  // Used by Erasure Coding, scan files and recovery broken files
 	"Cluster.PinGet":               RPCClosed,
 	"Cluster.PinPath":              RPCClosed,
 	"Cluster.Pins":                 RPCClosed, // Used in stateless tracker, ipfsproxy, restapi
