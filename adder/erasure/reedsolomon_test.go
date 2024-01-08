@@ -18,7 +18,7 @@ func TestSplitAndRecon(t *testing.T) {
 	originData := make([]byte, fileSize)
 	_, err := rand.Read(originData)
 	assert.Nil(t, err)
-	rs := New(context.Background(), DefaultDataShards, DefaultParityShards, shardSize)
+	rs := New(context.Background(), 4, 2, shardSize)
 	// send blocks and receive parityVects shards
 	dataVects := make([][]byte, 1)
 	b := make([]byte, blockSize)
