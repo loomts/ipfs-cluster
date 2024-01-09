@@ -1,23 +1,22 @@
 ## IPFS Cluster(Erasure Coding Support)
 ### Warning
-1. This project is in progress.
-2. Change the `Cluster.Pin` RPC promission to RPCTrusted in order to Pin Peers.
+This project is in progress.
 
 ### Motivation
-IPFS-Cluster is a good project for data orchestration on IPFS. But it unsupport erasure coding, which means that we should use multiple memory to fault tolerance. But it can be solved by adding a [Reed-Solomon](https://github.com/klauspost/reedsolomon) layer. See [discuss](https://discuss.ipfs.tech/t/is-there-an-implementation-of-ipfs-that-includes-erasure-coding-like-reed-solomon-right-now/17052/9).
+IPFS-Cluster is a good project for data orchestration on IPFS. But it does not support erasure coding, which means that we need to use multiple memory for fault tolerance. But it can be solved by adding a [Reed-Solomon](https://github.com/klauspost/reedsolomon) layer. See [discuss](https://discuss.ipfs.tech/t/is-there-an-implementation-of-ipfs-that-includes-erasure-coding-like-reed-solomon-right-now/17052/9).
 
 ### Overview
 
 This work can be divided into three parts.
-1. Add, figure out how to obtain data. Because data can only be accessed once, we can only get the block data. So also send blocks to ReedSolomon when send to IPFS. After ReedSolomon module receives six data shards(configable) it will generate three parity shards and send them to `adder`. While adder receives parity shards, it will reuse `single/dag_service` add them to IPFS.
-2. Allocate, decide which shard sends to which node. The implementation makes more peers store the data shards, and more than one peer stores the parity shards. See `ShardAllocate` for details. After figure out who store the shards, then use RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to **remote** or local Pin. So I open the `RPCTrusted` permission for `Cluster.Pin`.
-3. Get data or reconstruct, first make clusterPin store the cid of data and parity shards and data shards' size(when erasure coding). metaPin(rootPin) points to clusterPin. when get command received, cluster will first use simple dag try to get all data by traversal and `BlockGet`. If it cannot get all data, then try to get data and parity shards separately, finally use reedsolomon reconstruct.
+1. Data Addition: First is obtain data. Since data can only be accessed once, we must use `DAGService.Get` get the block data and send it to Erasure module during DAG traversal. Once Erasure module receives enough data shards, it use ReedSolomon encodes parity shards and send them to `adder`. Then adder reuses `single/dag_service` add them to IPFS as several individual files.
+2. Shard Allocation: We need to decide which nodes are suitable to each shard. The implementation ensures that large number of peers store the data shards, and more than one peer stores the parity shards. See `ShardAllocate` for details. After determining allocation of shards, we use the RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to pin **remotely** or locally. Therefore, I have enabled the `RPCTrusted` permission for `Cluster.Pin`.
+3. Data Recovery: We use `clusterPin` store the cid of data and parity shards as well as the size of data shards. During reconstruction, we set a timeout and attempt to retrieve data and parity shards separately. If some data shards are broken, we finally use ReedSolomon module to reconstruct and repin the file.
 
 ### TODO
-1. Enable special erasure coding ratios
-2. Send parity shards to one machine by one stream.
-3. Now use the sharding dag_service to store the origin file and single dag_service to store single file, need to make a new adder module combine it.
-4. ECGet only can get data with one loop of links, not enable dfs, need to make large sharding and test.
+1. Send parity shards to one machine via a single stream.
+2. Currently, we use the sharding `dag_service` to store the original file and `single/dag_service` to store single files. We need to create a new `adder` module to combine them.
+3. `ECGet` can only retrieve data with one loop of links, and does not enable DFS traverse DAG.
+
 
 ---
 [![Made by](https://img.shields.io/badge/By-Protocol%20Labs-000000.svg?style=flat-square)](https://protocol.ai)
