@@ -10,12 +10,70 @@ IPFS-Cluster is a good project for data orchestration on IPFS. But it does not s
 This work can be divided into three parts.
 1. Data Addition: First is obtain data. Since data can only be accessed once, we must use `DAGService.Get` get the block data and send it to Erasure module during DAG traversal. Once Erasure module receives enough data shards, it use ReedSolomon encodes parity shards and send them to `adder`. Then adder reuses `single/dag_service` add them to IPFS as several individual files.
 2. Shard Allocation: We need to decide which nodes are suitable to each shard. The implementation ensures that large number of peers store the data shards, and more than one peer stores the parity shards. See `ShardAllocate` for details. After determining allocation of shards, we use the RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to pin **remotely** or locally. Therefore, I have enabled the `RPCTrusted` permission for `Cluster.Pin`.
-3. Data Recovery: We use `clusterPin` store the cid of data and parity shards as well as the size of data shards. During reconstruction, we set a timeout and attempt to retrieve data and parity shards separately. If some data shards are broken, we finally use ReedSolomon module to reconstruct and repin the file.
+3. Data Recovery: We use `clusterPin` store the cid of data and parity shards as well as the size of data shards. During reconstruction, we set a timeout and attempt to retrieve data and parity shards separately. If some data shards are broken, we finally use ReedSolomon module to reconstruct and repin the file. **However, ReedSolomon has a limit**, only the sum of the number of existing data shards and party shards needs to be greater than the number of total data shards, can we reconstruct all data shards and piece together the complete data.
 
 ### TODO
-1. Send parity shards to one machine via a single stream.
-2. Currently, we use the sharding `dag_service` to store the original file and `single/dag_service` to store single files. We need to create a new `adder` module to combine them.
+1. Send parity shards to one peer via a single stream.
+2. Currently, we use the sharding `dag_service` to store the original file and `single/dag_service` to store single files. Need to create a new `adder` module to combine them.
 3. `ECGet` can only retrieve data with one loop of links, and does not enable DFS traverse DAG.
+4. Sometimes, peers store a different number of shards, when an important node (stores the largest number of shards) is down, it's difficult to meet the requirements for recovering data. We need to use a better mechanism to fit specific EC (data:parity) and ensure more peers leaving the cluster.
+
+### Usage
+- ipfs-cluster-ctl Command
+
+`add`: Added erasure coding params, build and type `ipfs-cluster-ctl add -h` for details.
+
+`ecget`: Get erasure file by cid, if file was broken(canot get all shards) it will automatically recovery it.
+
+`ecrecovery`: Scan all erasure coding files pinned, if some files broken then try to recovery.
+
+- shell test script
+
+This script use docker build 3 IPFS-Cluster peers, pin tmpfile to cluster, peer down, and recovery tmpfile.
+
+```zsh
+#!/bin/zsh
+cd $GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl && make
+cd $GOPATH/src/ipfs-cluster
+
+docker build -t ipfs-cluster-erasure -f Dockerfile-erasure .
+sleep 2
+docker-compose -f docker-compose-erasure.yml up -d
+sleep 10
+
+alias dctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl"
+
+# QmdPkUYov7iWbc6tGHbAGVR2ESV2L5FABa5ZNQoDENZSHm is the cid of tmpfile
+ci="QmdPkUYov7iWbc6tGHbAGVR2ESV2L5FABa5ZNQoDENZSHm"
+dctl pin rm $ci
+
+seq 1 100000 > tmpfile
+dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure --data-shards 6 --parity-shards 3
+rm tmpfile
+
+sleep 2
+
+# find frist peer no equal cluster0 and store sharding data
+x=$(dctl status --filter pinned | grep cluster | awk -F'cluster' '{print $2}' | awk '{print $1}' | sort | uniq -c | awk '$1 == 1 && $2 != 0 {print $2}' | head -n 1)
+docker stop "cluster$x" "ipfs$x"
+
+sleep 1
+dctl status --filter pinned
+dctl ipfs gc
+sleep 1
+
+output=$(dctl ecrecovery | awk '{print $1}')
+
+if [ "$output" = "$ci" ]; then
+    echo "The strings are equal."
+else
+    echo "The strings are not equal."
+fi
+
+# docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
+# sudo rm -rf compose
+# docker rmi ipfs-cluster-erasure
+```
 
 
 ---
@@ -56,12 +114,13 @@ Please participate in the [IPFS Cluster user registry](https://docs.google.com/f
   - [Motivation](#motivation)
   - [Overview](#overview)
   - [TODO](#todo)
+  - [Usage](#usage)
   - [Are you using IPFS Cluster?](#are-you-using-ipfs-cluster)
 - [Table of Contents](#table-of-contents)
 - [Documentation](#documentation)
 - [News \& Roadmap](#news--roadmap)
 - [Install](#install)
-- [Usage](#usage)
+- [Usage](#usage-1)
 - [Contribute](#contribute)
 - [License](#license)
 

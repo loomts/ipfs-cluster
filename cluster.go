@@ -1,7 +1,6 @@
 package ipfscluster
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2349,19 +2348,6 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 		b = append(b, v...)
 	}
 
-	// ---test----
-	expected := make([]byte, 0, len(b))
-	for i := 1; i <= 100000; i++ {
-		expected = append(expected, []byte(strconv.Itoa(i))...)
-		expected = append(expected, '\n')
-	}
-	if bytes.Compare(b, expected) == 0 {
-		fmt.Println("==================b matches the expected content")
-	} else {
-		fmt.Println("------------------b does not match the expected content")
-	}
-	// ---test----
-
 	logger.Infof("reconstruct %s success, size:%d", metaPin.Cid, len(b))
 	return b, need, nil
 }
@@ -2418,7 +2404,7 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
 	wg := sync.WaitGroup{}
 	for p := range pins {
-		if p.Type == api.MetaType {
+		if p.Type == api.MetaType && p.DataShards != 0 && p.ParityShards != 0 {
 			wg.Add(1)
 			go func(ci api.Cid) {
 				defer wg.Done()

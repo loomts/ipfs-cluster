@@ -26,12 +26,14 @@ message PinOptions {
   sint32 ReplicationFactorMax = 2;
   string Name = 3;
   uint64 ShardSize = 4;
-  reserved 5; // reserved for UserAllocations
-  map<string, string> Metadata = 6 [deprecated = true];
-  bytes PinUpdate = 7;
-  uint64 ExpireAt = 8;
-  repeated bytes Origins = 9;
-  repeated Metadata SortedMetadata = 10;
+  sint32 DataShards = 5;
+  sint32 ParityShards = 6;
+  reserved 7; // reserved for UserAllocations
+  map<string, string> Metadata = 8 [deprecated = true];
+  bytes PinUpdate = 9;
+  uint64 ExpireAt = 10;
+  repeated bytes Origins = 11;
+  repeated Metadata SortedMetadata = 12;
 }
 
 message Metadata {

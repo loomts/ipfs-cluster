@@ -790,6 +790,13 @@ func (po PinOptions) Equals(po2 PinOptions) bool {
 		return false
 	}
 
+	if po.DataShards != po2.DataShards {
+		return false
+	}
+
+	if po.ParityShards != po2.ParityShards {
+		return false
+	}
 	lenAllocs1 := len(po.UserAllocations)
 	lenAllocs2 := len(po2.UserAllocations)
 	if lenAllocs1 != lenAllocs2 {
@@ -847,6 +854,8 @@ func (po PinOptions) ToQuery() (string, error) {
 	q.Set("name", po.Name)
 	q.Set("mode", po.Mode.String())
 	q.Set("shard-size", fmt.Sprintf("%d", po.ShardSize))
+	q.Set("data-shards", fmt.Sprintf("%d", po.DataShards))
+	q.Set("parity-shards", fmt.Sprintf("%d", po.ParityShards))
 	q.Set("user-allocations", strings.Join(PeersToStrings(po.UserAllocations), ","))
 	if !po.ExpireAt.IsZero() {
 		v, err := po.ExpireAt.MarshalText()
@@ -902,6 +911,22 @@ func (po *PinOptions) FromQuery(q url.Values) error {
 		shardSize, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
 			return errors.New("parameter shard_size is invalid")
+		}
+		po.ShardSize = shardSize
+	}
+
+	if v := q.Get("data-shards"); v != "" {
+		shardSize, err := strconv.ParseUint(v, 10, 32)
+		if err != nil {
+			return errors.New("parameter data-shards is invalid")
+		}
+		po.ShardSize = shardSize
+	}
+
+	if v := q.Get("parity-shards"); v != "" {
+		shardSize, err := strconv.ParseUint(v, 10, 32)
+		if err != nil {
+			return errors.New("parameter parity-shards is invalid")
 		}
 		po.ShardSize = shardSize
 	}
@@ -1133,6 +1158,8 @@ func (pin Pin) ProtoMarshal() ([]byte, error) {
 		ReplicationFactorMax: int32(pin.ReplicationFactorMax),
 		Name:                 pin.Name,
 		ShardSize:            pin.ShardSize,
+		DataShards:           int32(pin.DataShards),
+		ParityShards:         int32(pin.ParityShards),
 		// Metadata:             pin.Metadata,
 		PinUpdate: pin.PinUpdate.Bytes(),
 		ExpireAt:  expireAtProto,
@@ -1203,7 +1230,8 @@ func (pin *Pin) ProtoUnmarshal(data []byte) error {
 	pin.ReplicationFactorMax = int(opts.GetReplicationFactorMax())
 	pin.Name = opts.GetName()
 	pin.ShardSize = opts.GetShardSize()
-
+	pin.DataShards = int(opts.GetDataShards())
+	pin.ParityShards = int(opts.GetParityShards())
 	// pin.UserAllocations = opts.GetUserAllocations()
 	exp := opts.GetExpireAt()
 	if exp > 0 {

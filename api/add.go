@@ -182,6 +182,12 @@ func AddParamsFromQuery(query url.Values) (AddParams, error) {
 	if params.Erasure && params.Shard {
 		params.RawLeaves = true
 	}
+	shardSize := int(DefaultShardSize)
+	err = parseIntParam(query, "shard-size", &shardSize)
+	if err != nil {
+		return params, err
+	}
+	params.ShardSize = uint64(shardSize)
 	err = parseIntParam(query, "data-shards", &params.DataShards)
 	if err != nil {
 		return params, err
@@ -243,6 +249,7 @@ func (p AddParams) ToQueryString() (string, error) {
 	}
 	query.Set("shard", fmt.Sprintf("%t", p.Shard))
 	query.Set("erasure", fmt.Sprintf("%t", p.Erasure))
+	query.Set("shard-size", fmt.Sprintf("%d", p.ShardSize))
 	query.Set("data-shards", fmt.Sprintf("%d", p.DataShards))
 	query.Set("parity-shards", fmt.Sprintf("%d", p.ParityShards))
 	query.Set("local", fmt.Sprintf("%t", p.Local))
