@@ -171,6 +171,7 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	metaPin.Reference = &ref
 	metaPin.MaxDepth = 0 // irrelevant. Meta-pins are not pinned
 	metaPin.Metadata = nil
+	metaPin.ShardSize = dgs.addParams.ShardSize
 	err = adder.Pin(ctx, dgs.rpcClient, metaPin)
 	if err != nil {
 		return dataRoot, err

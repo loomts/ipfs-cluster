@@ -131,8 +131,9 @@ func BlockAllocate(ctx context.Context, rpc *rpc.Client, pinOpts api.PinOptions)
 	return allocsStr, err
 }
 
-// ShardAllocate choose one peer to send shard
-func ShardAllocate(peers []peer.ID, dataShards int, parityShards int, idx int, isData bool) (peer.ID, error) {
+// DefaultECAllocate choose one peer to send shard
+// more suitable for EC(4,2), and 3 peers
+func DefaultECAllocate(peers []peer.ID, dShards int, pShards int, idx int, isData bool) (peer.ID, error) {
 	if len(peers) == 0 {
 		return "", errors.New("no peers")
 	}
@@ -144,21 +145,22 @@ func ShardAllocate(peers []peer.ID, dataShards int, parityShards int, idx int, i
 		return peers[i].String() < peers[j].String()
 	})
 
-	// dataPeers is the number of peers who store data shard, hopefully more than the number of parity peers.
-	var dataPeers int
-	if dataShards*len(peers)%(dataShards+parityShards) == 0 {
-		dataPeers = dataShards * len(peers) / (dataShards + parityShards)
+	// dPeerNum is the number of peers who store data shard, hopefully more than the number of parity peers.
+	var dPeerNum int
+	N := dShards + pShards
+	if dShards*len(peers)%N == 0 {
+		dPeerNum = dShards * len(peers) / N
 	} else {
-		dataPeers = 1 + int(dataShards*len(peers)/(dataShards+parityShards))
-		if len(peers)-1 < 1+int(dataShards*len(peers)/(dataShards+parityShards)) {
-			dataPeers = len(peers) - 1
+		dPeerNum = 1 + int(dShards*len(peers)/N)
+		if len(peers) == dPeerNum {
+			dPeerNum = len(peers) - 1
 		}
 	}
-	parityPeers := len(peers) - dataPeers
+	pPeerNum := len(peers) - dPeerNum
 	if isData {
-		return peers[idx%dataPeers], nil
+		return peers[idx%dPeerNum], nil
 	} else {
-		return peers[dataPeers+idx%parityPeers], nil
+		return peers[dPeerNum+idx%pPeerNum], nil
 	}
 }
 

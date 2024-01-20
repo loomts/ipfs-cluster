@@ -12,8 +12,8 @@ import (
 
 // DefaultShardSize is the shard size for params objects created with DefaultParams().
 var DefaultShardSize = uint64(100 * 1024 * 1024) // 100 MB
-var DefaultDataShards = 6
-var DefaultParityShards = 3
+var DefaultDataShards = 4
+var DefaultParityShards = 2
 
 // AddedOutput carries information for displaying the standard ipfs output
 // indicating a node of a file has been added.

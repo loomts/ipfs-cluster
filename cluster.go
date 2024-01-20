@@ -1377,7 +1377,7 @@ func (c *Cluster) PinGet(ctx context.Context, h api.Cid) (api.Pin, error) {
 	if err != nil {
 		return api.Pin{}, err
 	}
-	fmt.Printf("cid: %v, allocation:%v, name:%v, metadata:%v\n", pin.Cid, pin.Allocations, pin.Name, pin.Metadata)
+	fmt.Printf("PinGet->cid: %v, allocation:%v, name:%v, metadata:%v\n", pin.Cid, pin.Allocations, pin.Name, pin.Metadata)
 	return pin, nil
 }
 
@@ -2370,10 +2370,10 @@ func (c *Cluster) ECReAllocate(ctx context.Context, prevCid api.Cid, data []byte
 	shardAddParam.Erasure = true
 	shardAddParam.RawLeaves = true
 	shardAddParam.Name = prev.Name
+	shardAddParam.ReplicationFactorMin = 1
+	shardAddParam.ReplicationFactorMax = 1
 	shardAddParam.DataShards = prev.DataShards
 	shardAddParam.ParityShards = prev.ParityShards
-	shardAddParam.ReplicationFactorMin = prev.ReplicationFactorMin
-	shardAddParam.ReplicationFactorMax = prev.ReplicationFactorMax
 	shardAddParam.ShardSize = prev.ShardSize
 	mapDir := files.NewMapDirectory(map[string]files.Node{prev.Name: files.NewBytesFile(data)})
 

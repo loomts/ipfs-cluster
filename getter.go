@@ -195,11 +195,12 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum 
 			}()
 			select {
 			case vects[i] = <-resultCh:
+				logger.Infof("get %dth shard successfully", i)
 				return
 			case err := <-errCh:
 				logger.Errorf("cannot get %dth shard: %s", i, err)
-			case <-time.After(30 * time.Second):
-				logger.Errorf("cannot get %dth shard: timeout 30s", i)
+			case <-time.After(time.Minute):
+				logger.Errorf("cannot get %dth shard: timeout 1min", i)
 			}
 			needReCon = true
 		}(i, sh)

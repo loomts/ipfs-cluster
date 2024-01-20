@@ -47,13 +47,15 @@ alias dctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl"
 ci="QmdPkUYov7iWbc6tGHbAGVR2ESV2L5FABa5ZNQoDENZSHm"
 dctl pin rm $ci
 
-seq 1 100000 > tmpfile
-dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure --data-shards 6 --parity-shards 3
+seq 1 1000000 > tmpfile
+dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure
+# dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure --data-shards 4 --parity-shards 2
 rm tmpfile
 
 sleep 2
 
 # find frist peer no equal cluster0 and store sharding data
+# awk '$1 == 1 && $2 != 0 {print $2}' means that find the peer that store one shard and it's id not cluster0(cluster0 expose port)
 x=$(dctl status --filter pinned | grep cluster | awk -F'cluster' '{print $2}' | awk '{print $1}' | sort | uniq -c | awk '$1 == 1 && $2 != 0 {print $2}' | head -n 1)
 docker stop "cluster$x" "ipfs$x"
 

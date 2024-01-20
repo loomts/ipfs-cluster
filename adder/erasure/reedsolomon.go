@@ -227,6 +227,7 @@ func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dS
 	wg.Add(len(parityVects) / p)
 	for i := 0; i < len(parityVects)/p; i++ {
 		// batch reconstruct
+		i := i
 		go func(dVects [][]byte, pVects [][]byte, dSize []int) {
 			defer wg.Done()
 			shardSize, err := r.getShardSizeAndCheck(dVects, pVects)
@@ -248,10 +249,17 @@ func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dS
 				vects = append(vects, make([]byte, shardSize))
 			}
 			vects = append(vects, pVects...)
+
+			for j := range vects {
+				fmt.Println("batch", i, "vects", j, "len", len(vects[j]))
+				if len(vects[j]) == 0 || vects[j] == nil {
+					fmt.Printf("====batch%d -> vects[%d] is nil\n", i, j)
+				}
+			}
 			er := r.rs.Reconstruct(vects)
 			if err != nil {
 				err = errors.Wrap(err, er.Error())
-				log.Errorf("reconstruct error:%v", err)
+				log.Errorf("reconstruct shards[%d~%d] error:%v", i*d, min((i+1)*d, len(dataVects)), err)
 				return
 			}
 			// remove diff
@@ -269,8 +277,6 @@ func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dS
 
 func (r *ReedSolomon) getShardSizeAndCheck(dVects [][]byte, pVects [][]byte) (int, error) {
 	shardSize := 0
-	noParity := false
-	all := len(pVects) + len(dVects)
 	need := 0
 	for _, v := range pVects {
 		if v == nil || len(v) == 0 {
@@ -279,18 +285,15 @@ func (r *ReedSolomon) getShardSizeAndCheck(dVects [][]byte, pVects [][]byte) (in
 			shardSize = len(v)
 		}
 	}
-	if shardSize == 0 {
-		noParity = true
-	}
 	for _, v := range dVects {
 		if v == nil || len(v) == 0 {
 			need++
-		}
-		if noParity {
+		} else {
 			shardSize = max(shardSize, len(v))
 		}
 	}
-	if all-need >= r.dataShards {
+	fmt.Printf("need:%d, shardSize:%d\n", need, shardSize)
+	if need > r.parityShards {
 		return shardSize, errors.New("data vects not enough, cannot reconstruct")
 	}
 	return shardSize, nil
