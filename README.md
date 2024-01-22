@@ -6,17 +6,17 @@ This project is in progress.
 IPFS-Cluster is a good project for data orchestration on IPFS. But it does not support erasure coding, which means that we need to use multiple memory for fault tolerance. But it can be solved by adding a [Reed-Solomon](https://github.com/klauspost/reedsolomon) layer. See [discuss](https://discuss.ipfs.tech/t/is-there-an-implementation-of-ipfs-that-includes-erasure-coding-like-reed-solomon-right-now/17052/9).
 
 ### Overview
-
 This work can be divided into three parts.
 1. Data Addition: First is obtain data. Since data can only be accessed once, we must use `DAGService.Get` get the block data and send it to Erasure module during DAG traversal. Once Erasure module receives enough data shards, it use ReedSolomon encodes parity shards and send them to `adder`. Then adder reuses `single/dag_service` add them to IPFS as several individual files.
 2. Shard Allocation: We need to decide which nodes are suitable to each shard. The implementation ensures that large number of peers store the data shards, and more than one peer stores the parity shards. See `ShardAllocate` for details. After determining allocation of shards, we use the RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to pin **remotely** or locally. Therefore, I have enabled the `RPCTrusted` permission for `Cluster.Pin`.
 3. Data Recovery: We use `clusterPin` store the cid of data and parity shards as well as the size of data shards. During reconstruction, we set a timeout and attempt to retrieve data and parity shards separately. If some data shards are broken, we finally use ReedSolomon module to reconstruct and repin the file. **However, ReedSolomon has a limit**, only the sum of the number of existing data shards and party shards needs to be greater than the number of total data shards, can we reconstruct all data shards and piece together the complete data.
 
 ### TODO
+The basic functions about Erasure Coding have been implemented. But still something need to be optimize.
+
 1. Send parity shards to one peer via a single stream.
-2. Currently, we use the sharding `dag_service` to store the original file and `single/dag_service` to store single files. Need to create a new `adder` module to combine them.
-3. `ECGet` can only retrieve data with one loop of links, and does not enable DFS traverse DAG.
-4. Sometimes, peers store a different number of shards, when an important node (stores the largest number of shards) is down, it's difficult to meet the requirements for recovering data. We need to use a better mechanism to fit specific EC (data:parity) and ensure more peers leaving the cluster.
+2. Currently, we use the `sharding/dag_service` to store the original file and `single/dag_service` to store single files. More elegant way is to create a new `adder` module to combine them.
+3. Sometimes, peers store a different number of shards, when an important node (stores the largest number of shards) is down, it's difficult to meet the requirements for recovering data. We need to use a better mechanism to fit specific RS(d:p) and ensure more peers leaving the cluster.
 
 ### Usage
 - ipfs-cluster-ctl Command
@@ -29,7 +29,7 @@ This work can be divided into three parts.
 
 - shell test script
 
-This script use docker build 3 IPFS-Cluster peers, pin tmpfile to cluster, peer down, and recovery tmpfile.
+This script use docker build 3 IPFS-Cluster peers, pin tmpfile to cluster, make peer down, and recovery tmpfile.
 
 ```zsh
 #!/bin/zsh
@@ -43,8 +43,8 @@ sleep 10
 
 alias dctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl"
 
-# QmdPkUYov7iWbc6tGHbAGVR2ESV2L5FABa5ZNQoDENZSHm is the cid of tmpfile
-ci="QmdPkUYov7iWbc6tGHbAGVR2ESV2L5FABa5ZNQoDENZSHm"
+# QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ is the cid of tmpfile
+ci="QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ"
 dctl pin rm $ci
 
 seq 1 250000 > tmpfile
@@ -56,7 +56,7 @@ sleep 2
 
 # find frist peer no equal cluster0 and store sharding data
 # awk '$1 == 1 && $2 != 0 {print $2}' means that find the peer that store one shard and it's id not cluster0(cluster0 expose port)
-x=$(dctl status --filter pinned | grep cluster | awk -F'cluster' '{print $2}' | awk '{print $1}' | sort | uniq -c | awk '$1 == 1 && $2 != 0 {print $2}' | head -n 1)
+x=$(dctl status --filter pinned | grep cluster | awk -F'cluster' '{print $2}' | awk '{print $1}' | sort | uniq -c | awk '$1 == 3 && $2 != 0 {print $2}' | head -n 1)
 docker stop "cluster$x" "ipfs$x"
 
 sleep 1
