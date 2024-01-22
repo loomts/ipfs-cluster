@@ -1377,7 +1377,6 @@ func (c *Cluster) PinGet(ctx context.Context, h api.Cid) (api.Pin, error) {
 	if err != nil {
 		return api.Pin{}, err
 	}
-	fmt.Printf("PinGet->cid: %v, allocation:%v, name:%v, metadata:%v\n", pin.Cid, pin.Allocations, pin.Name, pin.Metadata)
 	return pin, nil
 }
 
@@ -2298,7 +2297,7 @@ func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) ([]byte, error) {
 		return nil, fmt.Errorf("error reconstructing file: %s", err)
 	}
 	if need {
-		_, err = c.ECReAllocate(ctx, ci, b)
+		err := c.ECReAllocate(ctx, ci, b)
 		if err != nil {
 			logger.Errorf("error ECReAllocate failed: %s", err)
 		}
@@ -2352,12 +2351,11 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 	return b, need, nil
 }
 
-func (c *Cluster) ECReAllocate(ctx context.Context, prevCid api.Cid, data []byte) (api.Pin, error) {
+func (c *Cluster) ECReAllocate(ctx context.Context, prevCid api.Cid, data []byte) error {
 	prev, err := c.PinGet(ctx, prevCid)
 	if err != nil {
-		return api.Pin{}, fmt.Errorf("cid was not pinned: %s", err)
+		return fmt.Errorf("cid was not pinned: %s", err)
 	}
-	logger.Infof("reallocate file %s(re pin to cluster use sharding and erasure)", prev.Cid)
 	metrics := c.monitor.LatestMetrics(ctx, pingMetricName)
 	peers := make([]peer.ID, len(metrics))
 	for i, m := range metrics {
@@ -2381,10 +2379,17 @@ func (c *Cluster) ECReAllocate(ctx context.Context, prevCid api.Cid, data []byte
 	mr := multipart.NewReader(r, r.Boundary())
 	ci, err := c.AddFile(ctx, mr, shardAddParam)
 	if err != nil {
-		logger.Error(err)
+		return err
 	}
-	logger.Infof("reallocated file %s to %s", prev.Cid, ci)
-	return c.PinGet(ctx, ci)
+	if prev.Cid != ci {
+		logger.Errorf("reallocated file %s to %s, RollBACK(pin rm %s)", prev.Cid, ci, ci)
+		_, err = c.Unpin(ctx, ci)
+		if err != nil {
+			logger.Error(err)
+		}
+		return fmt.Errorf("cannot reallocate, data not same with prev version")
+	}
+	return nil
 }
 
 func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
@@ -2416,10 +2421,15 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 				if !need {
 					return
 				}
-				pin, err := c.ECReAllocate(ctx, ci, b)
+				err = c.ECReAllocate(ctx, ci, b)
 				if err != nil {
 					logger.Errorf("ReAllocate %s error:%s", ci, err)
 					return
+				}
+				pin, err := c.PinGet(ctx, ci)
+				if err != nil {
+					logger.Error(err)
+					
 				}
 				out <- pin
 			}(p.Cid)

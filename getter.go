@@ -4,25 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/ipfs-cluster/ipfs-cluster/adder/sharding"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs/boxo/ipld/merkledag"
-	"github.com/ipfs/boxo/ipld/unixfs"
-	uio "github.com/ipfs/boxo/ipld/unixfs/io"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 	ipldlegacy "github.com/ipfs/go-ipld-legacy"
 	dagpb "github.com/ipld/go-codec-dagpb"
-	"github.com/ipld/go-ipld-prime/codec/dagcbor"
-	"github.com/ipld/go-ipld-prime/codec/raw"
-	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
-	"github.com/ipld/go-ipld-prime/multicodec"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 )
 
@@ -30,13 +22,7 @@ var ipldDecoder *ipldlegacy.Decoder
 
 // create an ipld registry specific to this package
 func init() {
-	mcReg := multicodec.Registry{}
-	mcReg.RegisterDecoder(cid.DagProtobuf, dagpb.Decode)
-	mcReg.RegisterDecoder(cid.Raw, raw.Decode)
-	mcReg.RegisterDecoder(cid.DagCBOR, dagcbor.Decode)
-	ls := cidlink.LinkSystemUsingMulticodecRegistry(mcReg)
-
-	ipldDecoder = ipldlegacy.NewDecoderWithLS(ls)
+	ipldDecoder = ipldlegacy.NewDecoder()
 	ipldDecoder.RegisterCodec(cid.DagProtobuf, dagpb.Type.PBNode, merkledag.ProtoNodeConverter)
 	ipldDecoder.RegisterCodec(cid.Raw, basicnode.Prototype.Bytes, merkledag.RawNodeConverter)
 }
@@ -59,7 +45,6 @@ func (ds *dagSession) Get(ctx context.Context, ci cid.Cid) (format.Node, error) 
 	if err != nil {
 		logger.Infof("Failed to get block %s, err: %s", ci, err)
 	}
-	// fmt.Printf("before decode cid:%s type:%v codec:%v, version:%v,Mtype:%v,Mlength:%v\n", ci, ci.Type(), ci.Prefix().Codec, ci.Prefix().Version, ci.Prefix().MhType, ci.Prefix().MhLength)
 	return ds.decode(ctx, b)
 }
 
@@ -77,7 +62,6 @@ func (ds *dagSession) GetMany(ctx context.Context, in []cid.Cid) <-chan *format.
 				cis = append(cis, ci)
 				continue
 			}
-			// fmt.Printf("before decode cid:%s type:%v codec:%v, version:%v,Mtype:%v,Mlength:%v\n", ci, ci.Type(), ci.Prefix().Codec, ci.Prefix().Version, ci.Prefix().MhType, ci.Prefix().MhLength)
 			var nd format.Node
 			nd, err = ds.decode(ctx, b)
 			if !sendOrDone(ctx, out, &format.NodeOption{Node: nd, Err: err}) {
@@ -91,26 +75,6 @@ func (ds *dagSession) GetMany(ctx context.Context, in []cid.Cid) <-chan *format.
 	}()
 
 	return out
-}
-
-func (ds *dagSession) Add(ctx context.Context, node format.Node) error {
-	//TODO unreachable code
-	panic("unreachable code")
-}
-
-func (ds *dagSession) AddMany(ctx context.Context, nodes []format.Node) error {
-	//TODO unreachable code
-	panic("unreachable code")
-}
-
-func (ds *dagSession) Remove(ctx context.Context, c cid.Cid) error {
-	//TODO unreachable code
-	panic("unreachable code")
-}
-
-func (ds *dagSession) RemoveMany(ctx context.Context, cids []cid.Cid) error {
-	//TODO unreachable code
-	panic("unreachable code")
 }
 
 func sendOrDone(ctx context.Context, out chan<- *format.NodeOption, no *format.NodeOption) bool {
@@ -132,49 +96,9 @@ func (ds *dagSession) decode(ctx context.Context, rawb []byte) (format.Node, err
 	return nd, err
 }
 
-func (ds *dagSession) getFileWithTimeout(ctx context.Context, ci api.Cid, timeout time.Duration) ([]byte, error) {
-	// try to get file directly
-	done := make(chan struct{})
-	var fileb []byte
-	var err error
-	go func() {
-		defer close(done)
-		var b []byte
-		b, err = ds.blockGet(ctx, ci)
-		if err != nil {
-			return
-		}
-		var metaNode format.Node
-		var r uio.DagReader
-		metaNode, err = ipldDecoder.DecodeNode(ctx, blocks.NewBlock(b))
-		if err != nil {
-			return
-		}
-		r, err = uio.NewDagReader(ctx, metaNode, ds)
-		if err == nil {
-			fileb, err = io.ReadAll(r)
-			if err != nil {
-				logger.Errorf("cannot read Node: %s", err)
-				return
-			}
-		}
-	}()
-	select {
-	case <-done:
-		if err == nil {
-			logger.Info("get file directly success")
-			return fileb, nil
-		}
-		logger.Errorf("read file directly failed: %s, try to reconstruct", err)
-	case <-time.After(timeout):
-		logger.Info("cannot get file directly: timeout 30s, try to reconstruct")
-	}
-	return nil, errors.New("cannot get file directly")
-}
-
-// try to get shard by dag
+// ECGetShards get both data shards and parity shards by root cid
 func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum int) ([][]byte, [][]byte, bool, error) {
-	links, errs := ds.ECResolveLinks(ctx, ci, dataShardNum) // get sorted data shards
+	links, errs := ds.ResolveCborLinks(ctx, ci) // get sorted data shards
 	if errs != nil {
 		logger.Error(errs)
 	}
@@ -203,7 +127,7 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum 
 				return
 			case err := <-errCh:
 				logger.Errorf("cannot get %dth shard: %s", i, err)
-			case <-time.After(time.Second * 30):
+			case <-time.After(time.Minute):
 				logger.Errorf("cannot get %dth shard: timeout 1min", i)
 			}
 			needReCon = true
@@ -213,24 +137,24 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum 
 	return vects[:dataShardNum:dataShardNum], vects[dataShardNum:], needReCon, nil
 }
 
-func (ds *dagSession) ECResolveLinks(ctx context.Context, clusterDAG api.Cid, dataShardLen int) ([]*format.Link, error) {
-	clusterDAGBlock, err := ds.blockGet(ctx, clusterDAG)
+// ResolveCborLinks get sorted block links
+func (ds *dagSession) ResolveCborLinks(ctx context.Context, shard api.Cid) ([]*format.Link, error) {
+	clusterDAGBlock, err := ds.blockGet(ctx, shard)
 	if err != nil {
-		return nil, fmt.Errorf("cluster pin(%s) was not stored: %s", clusterDAG, err)
+		return nil, fmt.Errorf("cluster pin(%s) was not stored: %s", shard, err)
 	}
 	clusterDAGNode, err := sharding.CborDataToNode(clusterDAGBlock, "cbor")
 	if err != nil {
 		return nil, err
 	}
 
-	shards := clusterDAGNode.Links()
-	links := make([]*format.Link, 0, len(shards))
+	blocks := clusterDAGNode.Links()
+	links := make([]*format.Link, 0, len(blocks))
 	var errs error
-	// traverse shards in order
-	// shards -> 0,cid0
-	for i := 0; i < len(shards); i++ {
+	// traverse shard in order
+	// blocks -> 0,cid0; 1,cid1
+	for i := 0; i < len(blocks); i++ {
 		sh, _, err := clusterDAGNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
-		fmt.Printf("shard %d: %s\n", i, sh.Cid)
 		if err != nil {
 			err = fmt.Errorf("cannot resolve %dst data shard: %s", i, err)
 			errors.Join(errs, err)
@@ -240,86 +164,62 @@ func (ds *dagSession) ECResolveLinks(ctx context.Context, clusterDAG api.Cid, da
 	return links, errs
 }
 
-// convert shard link to []byte
+// convert shard to []byte
 func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, isDataLink bool) ([]byte, error) {
 	shardBlock, err := ds.blockGet(ctx, api.NewCid(sh.Cid))
 	if err != nil {
 		return nil, fmt.Errorf("cannot get shard(%s)'s Block: %s", sh.Cid, err)
 	}
-	var nd format.Node
+
+	var links []*format.Link
+
 	if isDataLink {
-		nd, err = sharding.CborDataToNode(shardBlock, "cbor")
+		links, err = ds.ResolveCborLinks(ctx, api.NewCid(sh.Cid)) // get sorted data shards
 		if err != nil {
-			return nil, fmt.Errorf("cannot decode shard(%s): %s", sh.Cid, err)
+			return nil, fmt.Errorf("cannot resolve shard(%s): %s", sh.Cid, err)
 		}
 	} else {
-		// return ds.cid2Byte(ctx, sh.Cid)
-		if sh.Cid.Prefix().Codec == cid.DagProtobuf { // parityShard Qm.... Protobuf(multiblocks)
-			nd, err = merkledag.DecodeProtobuf(shardBlock)
+		switch sh.Cid.Prefix().Codec {
+		case cid.DagProtobuf:
+			// the reason why not use uio.NewDagReader is because dag_service.Get will call context.Cancel and sometime decode failed
+			nd, err := merkledag.DecodeProtobuf(shardBlock)
 			if err != nil {
 				return nil, fmt.Errorf("cannot decode shard(%s): %s", sh.Cid, err)
 			}
-		}
-		if sh.Cid.Prefix().Codec == cid.Raw { // parityShard RAW(only one block)
+			links = nd.Links()
+		case cid.Raw:
 			return shardBlock, nil
+		default:
+			return nil, fmt.Errorf("unsupported codec:%v", sh.Cid.Prefix().Codec)
 		}
 	}
-	return ds.ResolveRoot(ctx, nd)
+	return ds.ResolveRoot(ctx, links)
 }
 
-func (ds *dagSession) ResolveRoot(ctx context.Context, nd format.Node) ([]byte, error) {
-	fmt.Printf("resolve shard:%s, links.len:%d\n", nd.Cid(), len(nd.Links()))
-	vect := make([]byte, 0, len(nd.Links())*256*1024) // estimate size
-	for _, link := range nd.Links() {
-		fmt.Printf("nd.Links->link cid:%s type:%v codec:%v, version:%v,Mtype:%v\n", link.Cid, link.Cid.Type(), link.Cid.Prefix().Codec, link.Cid.Prefix().Version, link.Cid.Prefix().MhType)
-		if strings.HasPrefix(link.Cid.String(), "Qm") {
-			continue
-			// V0 cid("Qm...") is no leave node, need to be resolve
-
-			// subnd, err := ds.Get(ctx, link.Cid)
-			// if err != nil {
-			// 	return nil, fmt.Errorf("cannot fetch subNode of shard(%s): %s", nd.Cid(), err)
-			// }
-			// subb, err := ds.ResolveRoot(ctx, subnd)
-			// if err != nil {
-			// 	return nil, fmt.Errorf("cannot fetch subData of shard(%s): %s", nd.Cid(), err)
-			// }
-			// vect = append(vect, subb...)
-			// continue
-		}
+func (ds *dagSession) ResolveRoot(ctx context.Context, links []*format.Link) ([]byte, error) {
+	vect := make([]byte, 0, len(links)*256*1024) // estimate size
+	for _, link := range links {
 		b, err := ds.blockGet(ctx, api.NewCid(link.Cid))
 		if err != nil {
-			return nil, fmt.Errorf("cannot fetch DAG leave data of shard(%s): %s", nd.Cid(), err)
+			return nil, fmt.Errorf("cannot fetch block(%s): %s", link.Cid, err)
 		}
 		vect = append(vect, b...)
 	}
 	return vect, nil
 }
 
-func (ds *dagSession) cid2Byte(ctx context.Context, ci cid.Cid) ([]byte, error) {
-	nd, err := ds.Get(ctx, ci)
-	if err != nil {
-		return nil, err
-	}
-	var n int
-	out := make([]byte, 0, 256*1024*len(nd.Links()))
+func (ds *dagSession) Add(ctx context.Context, node format.Node) error {
+	panic("unreachable code")
+}
 
-	dagWalker := format.NewWalker(ctx, format.NewNavigableIPLDNode(nd, ds))
-	err = dagWalker.Iterate(func(visitedNode format.NavigableNode) error {
-		node := format.ExtractIPLDNode(visitedNode)
-		if len(node.Links()) > 0 {
-			return nil
-		}
-		b, err := unixfs.ReadUnixFSNodeData(node)
-		if err != nil {
-			return err
-		}
-		out = append(out, b...)
-		n += len(b)
-		return nil
-	})
-	if err == format.EndOfDag {
-		return out, nil
-	}
-	return nil, err
+func (ds *dagSession) AddMany(ctx context.Context, nodes []format.Node) error {
+	panic("unreachable code")
+}
+
+func (ds *dagSession) Remove(ctx context.Context, c cid.Cid) error {
+	panic("unreachable code")
+}
+
+func (ds *dagSession) RemoveMany(ctx context.Context, cids []cid.Cid) error {
+	panic("unreachable code")
 }

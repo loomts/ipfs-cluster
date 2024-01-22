@@ -98,7 +98,6 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	shardMeta := make(map[string]cid.Cid, len(dgs.shards))
 	for i, ci := range dgs.shards {
 		shardMeta[i] = ci
-		fmt.Printf("shard %s %s\n", i, ci)
 	}
 	if dgs.addParams.Erasure {
 		parityCids := dgs.rs.GetParityShards()
@@ -235,10 +234,13 @@ func (dgs *DAGService) ingestBlock(ctx context.Context, n ipld.Node) error {
 	size := uint64(len(n.RawData()))
 	// add the block to it if it fits and return
 	if shard.Size()+size < shard.Limit() {
-		shard.AddLink(ctx, n.Cid(), size)
 		if dgs.addParams.Erasure && !strings.HasPrefix(n.Cid().String(), "Qm") {
 			// V0 cid("Qm...") is not data block
+			shard.AddLink(ctx, n.Cid(), size)
 			dgs.rs.SendBlockTo() <- ec.StatBlock{Node: n, Stat: ec.DefaultBlock}
+		} else if !dgs.addParams.Erasure {
+			// not ensure if common sharding need Qm prefix cid, so remain the same as before.
+			shard.AddLink(ctx, n.Cid(), size)
 		}
 		return dgs.currentShard.sendBlock(ctx, n)
 	}
