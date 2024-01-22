@@ -47,7 +47,7 @@ alias dctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl"
 ci="QmdPkUYov7iWbc6tGHbAGVR2ESV2L5FABa5ZNQoDENZSHm"
 dctl pin rm $ci
 
-seq 1 1000000 > tmpfile
+seq 1 250000 > tmpfile
 dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure
 # dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure --data-shards 4 --parity-shards 2
 rm tmpfile

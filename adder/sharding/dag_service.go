@@ -98,6 +98,7 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	shardMeta := make(map[string]cid.Cid, len(dgs.shards))
 	for i, ci := range dgs.shards {
 		shardMeta[i] = ci
+		fmt.Printf("shard %s %s\n", i, ci)
 	}
 	if dgs.addParams.Erasure {
 		parityCids := dgs.rs.GetParityShards()
@@ -312,12 +313,12 @@ func (dgs *DAGService) FlushCurrentShard(ctx context.Context) (api.Cid, error) {
 	lens := len(dgs.shards)
 
 	shardCid, err := shard.Flush(ctx, lens, dgs.previousShard)
+	if err != nil {
+		return api.NewCid(shardCid), err
+	}
 	// end of shard
 	if dgs.addParams.Erasure {
 		dgs.rs.SendBlockTo() <- ec.StatBlock{Cid: api.NewCid(shardCid), Stat: ec.ShardEndBlock}
-	}
-	if err != nil {
-		return api.NewCid(shardCid), err
 	}
 	dgs.totalSize += shard.Size()
 	dgs.shards[fmt.Sprintf("%d", lens)] = shardCid

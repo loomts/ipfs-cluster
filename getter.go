@@ -12,6 +12,7 @@ import (
 	"github.com/ipfs-cluster/ipfs-cluster/adder/sharding"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs/boxo/ipld/unixfs"
 	uio "github.com/ipfs/boxo/ipld/unixfs/io"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -58,6 +59,7 @@ func (ds *dagSession) Get(ctx context.Context, ci cid.Cid) (format.Node, error) 
 	if err != nil {
 		logger.Infof("Failed to get block %s, err: %s", ci, err)
 	}
+	// fmt.Printf("before decode cid:%s type:%v codec:%v, version:%v,Mtype:%v,Mlength:%v\n", ci, ci.Type(), ci.Prefix().Codec, ci.Prefix().Version, ci.Prefix().MhType, ci.Prefix().MhLength)
 	return ds.decode(ctx, b)
 }
 
@@ -75,8 +77,9 @@ func (ds *dagSession) GetMany(ctx context.Context, in []cid.Cid) <-chan *format.
 				cis = append(cis, ci)
 				continue
 			}
-
-			nd, err := ds.decode(ctx, b)
+			// fmt.Printf("before decode cid:%s type:%v codec:%v, version:%v,Mtype:%v,Mlength:%v\n", ci, ci.Type(), ci.Prefix().Codec, ci.Prefix().Version, ci.Prefix().MhType, ci.Prefix().MhLength)
+			var nd format.Node
+			nd, err = ds.decode(ctx, b)
 			if !sendOrDone(ctx, out, &format.NodeOption{Node: nd, Err: err}) {
 				return
 			}
@@ -186,6 +189,7 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum 
 			resultCh := make(chan []byte)
 			errCh := make(chan error)
 			go func() {
+				// fmt.Printf("shard%d cid:%s type:%v codec:%v, version:%v,Mtype:%v,Mlength:%v\n", i, sh.Cid, sh.Cid.Type(), sh.Cid.Prefix().Codec, sh.Cid.Prefix().Version, sh.Cid.Prefix().MhType, sh.Cid.Prefix().MhLength)
 				vect, err := ds.ECLink2Raw(ctx, sh, i < dataShardNum)
 				if err != nil {
 					errCh <- err
@@ -195,11 +199,11 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum 
 			}()
 			select {
 			case vects[i] = <-resultCh:
-				logger.Infof("get %dth shard successfully", i)
+				logger.Infof("get %dth shard successfully, len:%d", i, len(vects[i]))
 				return
 			case err := <-errCh:
 				logger.Errorf("cannot get %dth shard: %s", i, err)
-			case <-time.After(time.Minute):
+			case <-time.After(time.Second * 30):
 				logger.Errorf("cannot get %dth shard: timeout 1min", i)
 			}
 			needReCon = true
@@ -245,24 +249,77 @@ func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, isDataLin
 	var nd format.Node
 	if isDataLink {
 		nd, err = sharding.CborDataToNode(shardBlock, "cbor")
+		if err != nil {
+			return nil, fmt.Errorf("cannot decode shard(%s): %s", sh.Cid, err)
+		}
 	} else {
-		nd, err = merkledag.DecodeProtobuf(shardBlock)
+		// return ds.cid2Byte(ctx, sh.Cid)
+		if sh.Cid.Prefix().Codec == cid.DagProtobuf { // parityShard Qm.... Protobuf(multiblocks)
+			nd, err = merkledag.DecodeProtobuf(shardBlock)
+			if err != nil {
+				return nil, fmt.Errorf("cannot decode shard(%s): %s", sh.Cid, err)
+			}
+		}
+		if sh.Cid.Prefix().Codec == cid.Raw { // parityShard RAW(only one block)
+			return shardBlock, nil
+		}
 	}
-	if err != nil {
-		return nil, fmt.Errorf("cannot decode shard(%s): %s", sh.Cid, err)
-	}
+	return ds.ResolveRoot(ctx, nd)
+}
+
+func (ds *dagSession) ResolveRoot(ctx context.Context, nd format.Node) ([]byte, error) {
+	fmt.Printf("resolve shard:%s, links.len:%d\n", nd.Cid(), len(nd.Links()))
 	vect := make([]byte, 0, len(nd.Links())*256*1024) // estimate size
-	// fetch each link
 	for _, link := range nd.Links() {
-		if isDataLink && strings.HasPrefix(link.Cid.String(), "Qm") {
-			// V0 cid("Qm...") is not data block
+		fmt.Printf("nd.Links->link cid:%s type:%v codec:%v, version:%v,Mtype:%v\n", link.Cid, link.Cid.Type(), link.Cid.Prefix().Codec, link.Cid.Prefix().Version, link.Cid.Prefix().MhType)
+		if strings.HasPrefix(link.Cid.String(), "Qm") {
 			continue
+			// V0 cid("Qm...") is no leave node, need to be resolve
+
+			// subnd, err := ds.Get(ctx, link.Cid)
+			// if err != nil {
+			// 	return nil, fmt.Errorf("cannot fetch subNode of shard(%s): %s", nd.Cid(), err)
+			// }
+			// subb, err := ds.ResolveRoot(ctx, subnd)
+			// if err != nil {
+			// 	return nil, fmt.Errorf("cannot fetch subData of shard(%s): %s", nd.Cid(), err)
+			// }
+			// vect = append(vect, subb...)
+			// continue
 		}
 		b, err := ds.blockGet(ctx, api.NewCid(link.Cid))
 		if err != nil {
-			return nil, fmt.Errorf("cannot fetch links' data of shard(%s): %s", sh.Cid, err)
+			return nil, fmt.Errorf("cannot fetch DAG leave data of shard(%s): %s", nd.Cid(), err)
 		}
 		vect = append(vect, b...)
 	}
 	return vect, nil
+}
+
+func (ds *dagSession) cid2Byte(ctx context.Context, ci cid.Cid) ([]byte, error) {
+	nd, err := ds.Get(ctx, ci)
+	if err != nil {
+		return nil, err
+	}
+	var n int
+	out := make([]byte, 0, 256*1024*len(nd.Links()))
+
+	dagWalker := format.NewWalker(ctx, format.NewNavigableIPLDNode(nd, ds))
+	err = dagWalker.Iterate(func(visitedNode format.NavigableNode) error {
+		node := format.ExtractIPLDNode(visitedNode)
+		if len(node.Links()) > 0 {
+			return nil
+		}
+		b, err := unixfs.ReadUnixFSNodeData(node)
+		if err != nil {
+			return err
+		}
+		out = append(out, b...)
+		n += len(b)
+		return nil
+	})
+	if err == format.EndOfDag {
+		return out, nil
+	}
+	return nil, err
 }

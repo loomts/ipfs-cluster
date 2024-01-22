@@ -251,13 +251,16 @@ func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dS
 			vects = append(vects, pVects...)
 
 			for j := range vects {
-				fmt.Println("batch", i, "vects", j, "len", len(vects[j]))
 				if len(vects[j]) == 0 || vects[j] == nil {
-					fmt.Printf("====batch%d -> vects[%d] is nil\n", i, j)
+					if j < d {
+						fmt.Printf("dataShard %d is nil\n", i*d+j)
+					} else {
+						fmt.Printf("parityShard %d is nil\n", i*p+j-d)
+					}
 				}
 			}
 			er := r.rs.Reconstruct(vects)
-			if err != nil {
+			if er != nil {
 				err = errors.Wrap(err, er.Error())
 				log.Errorf("reconstruct shards[%d~%d] error:%v", i*d, min((i+1)*d, len(dataVects)), err)
 				return
@@ -292,7 +295,7 @@ func (r *ReedSolomon) getShardSizeAndCheck(dVects [][]byte, pVects [][]byte) (in
 			shardSize = max(shardSize, len(v))
 		}
 	}
-	fmt.Printf("need:%d, shardSize:%d\n", need, shardSize)
+	fmt.Printf("dataShards:%d, parityShards:%d,need:%d, shardSize:%d\n", len(dVects), len(pVects), need, shardSize)
 	if need > r.parityShards {
 		return shardSize, errors.New("data vects not enough, cannot reconstruct")
 	}

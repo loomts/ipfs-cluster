@@ -190,13 +190,13 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 				if err != nil {
 					logger.Error("error adding parity to cluster: ", err)
 				}
-				parityClusterRoot, err := a.dgs2.Finalize(a.ctx, parityRoot)
+				_, err = a.dgs2.Finalize(a.ctx, parityRoot)
 				if err != nil {
 					logger.Error("error finalizing adder:", err)
 				}
-				a.dgs.GetRS().AddParityCid(i, parityClusterRoot)
+				a.dgs.GetRS().AddParityCid(i, parityRoot)
 				i += 1
-				logger.Infof("%s successfully added to cluster %s", parity.Name, parityClusterRoot)
+				logger.Infof("%s successfully added to cluster %s", parity.Name, parityRoot)
 			}
 		}
 	}()
