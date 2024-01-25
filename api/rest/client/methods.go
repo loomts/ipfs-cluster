@@ -18,7 +18,6 @@ import (
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
 	files "github.com/ipfs/boxo/files"
-	gopath "github.com/ipfs/boxo/path"
 	peer "github.com/libp2p/go-libp2p/core/peer"
 
 	"go.opencensus.io/trace"
@@ -124,7 +123,7 @@ func (c *defaultClient) PinPath(ctx context.Context, path string, opts api.PinOp
 	defer span.End()
 
 	var pin api.Pin
-	ipfspath, err := gopath.NewPath(path)
+	ipfspath, err := api.ParsePath(path)
 	if err != nil {
 		return api.Pin{}, err
 	}
@@ -155,7 +154,7 @@ func (c *defaultClient) UnpinPath(ctx context.Context, p string) (api.Pin, error
 	defer span.End()
 
 	var pin api.Pin
-	ipfspath, err := gopath.NewPath(p)
+	ipfspath, err := api.ParsePath(p)
 	if err != nil {
 		return api.Pin{}, err
 	}

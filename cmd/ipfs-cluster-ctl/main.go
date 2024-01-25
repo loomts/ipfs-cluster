@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	uuid "github.com/google/uuid"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/api/rest/client"
 	ipfspath "github.com/ipfs/boxo/path"
@@ -20,7 +21,6 @@ import (
 	ipfsapi "github.com/ipfs/kubo/client/rpc"
 	peer "github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
-	uuid "github.com/google/uuid"
 	cli "github.com/urfave/cli"
 )
 
@@ -311,8 +311,7 @@ P.S. You can use ipfs get instead of ipfs-cluster-ctl ecget if you do not use Er
 					checkErr("ecget", err)
 					err = ipfsAPI.Swarm().Connect(ctx, peer.AddrInfo{ID: peer.ID(id.ID)})
 					checkErr("ecget", err)
-					p, err := ipfspath.NewPath(ci.String())
-					checkErr("ecget", err)
+					p := ipfspath.FromCid(ci.Cid)
 					out, err := ipfsAPI.Unixfs().Get(ctx, p)
 					checkErr("ecget", err)
 					pwd, _ := os.Getwd()

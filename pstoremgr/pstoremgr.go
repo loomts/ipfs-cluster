@@ -117,7 +117,7 @@ func (pm *Manager) RmPeer(pid peer.ID) error {
 		return nil
 	}
 
-	logger.Debugf("forgetting peer %s", pid.Pretty())
+	logger.Debugf("forgetting peer %s", pid.String())
 	pm.host.Peerstore().ClearAddrs(pid)
 	return nil
 }

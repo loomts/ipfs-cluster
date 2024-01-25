@@ -28,7 +28,6 @@ import (
 	jwt "github.com/golang-jwt/jwt/v4"
 	types "github.com/ipfs-cluster/ipfs-cluster/api"
 	state "github.com/ipfs-cluster/ipfs-cluster/state"
-	gopath "github.com/ipfs/boxo/path"
 	logging "github.com/ipfs/go-log/v2"
 	libp2p "github.com/libp2p/go-libp2p"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
@@ -468,7 +467,7 @@ func (api *API) runLibp2pServer(ctx context.Context) {
 
 	listenMsg := ""
 	for _, a := range api.host.Addrs() {
-		listenMsg += fmt.Sprintf("        %s/p2p/%s\n", a, api.host.ID().Pretty())
+		listenMsg += fmt.Sprintf("        %s/p2p/%s\n", a, api.host.ID().String())
 	}
 
 	api.config.Logger.Infof(strings.ToUpper(api.config.ConfigKey)+" (libp2p-http): ENABLED. Listening on:\n%s\n", listenMsg)
@@ -544,7 +543,7 @@ func (api *API) ParsePinPathOrFail(w http.ResponseWriter, r *http.Request) types
 	vars := mux.Vars(r)
 	urlpath := "/" + vars["keyType"] + "/" + strings.TrimSuffix(vars["path"], "/")
 
-	path, err := gopath.ParsePath(urlpath)
+	path, err := types.ParsePath(urlpath)
 	if err != nil {
 		api.SendResponse(w, http.StatusBadRequest, errors.New("error parsing path: "+err.Error()), nil)
 		return types.PinPath{}

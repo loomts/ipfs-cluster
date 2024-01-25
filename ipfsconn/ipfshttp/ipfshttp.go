@@ -874,14 +874,18 @@ func (ipfs *Connector) Resolve(ctx context.Context, path string) (api.Cid, error
 	ctx, span := trace.StartSpan(ctx, "ipfsconn/ipfshttp/Resolve")
 	defer span.End()
 
-	validPath, err := gopath.ParsePath(path)
+	validPath, err := api.ParsePath(path)
+
 	if err != nil {
 		logger.Error("could not parse path: " + err.Error())
 		return api.CidUndef, err
 	}
-	if !strings.HasPrefix(path, "/ipns") && validPath.IsJustAKey() {
-		ci, _, err := gopath.SplitAbsPath(validPath)
-		return api.NewCid(ci), err
+	if !strings.HasPrefix(path, "/ipns") && validPath.Mutable() {
+		fpath, err := gopath.NewImmutablePath(validPath)
+		if err != nil {
+			return api.CidUndef, err
+		}
+		return api.NewCid(fpath.RootCid()), err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, ipfs.config.IPFSRequestTimeout)
@@ -897,9 +901,15 @@ func (ipfs *Connector) Resolve(ctx context.Context, path string) (api.Cid, error
 		logger.Error("could not unmarshal response: " + err.Error())
 		return api.CidUndef, err
 	}
-
-	ci, _, err := gopath.SplitAbsPath(gopath.FromString(resp.Path))
-	return api.NewCid(ci), err
+	p, err := api.ParsePath(resp.Path)
+	if err != nil {
+		return api.CidUndef, err
+	}
+	fpath, err := gopath.NewImmutablePath(p)
+	if err != nil {
+		return api.CidUndef, err
+	}
+	return api.NewCid(fpath.RootCid()), err
 }
 
 // SwarmPeers returns the peers currently connected to this ipfs daemon.

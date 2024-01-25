@@ -27,7 +27,6 @@ import (
 
 	handlers "github.com/gorilla/handlers"
 	mux "github.com/gorilla/mux"
-	path "github.com/ipfs/boxo/path"
 	cid "github.com/ipfs/go-cid"
 	cmd "github.com/ipfs/go-ipfs-cmds"
 	logging "github.com/ipfs/go-log/v2"
@@ -359,7 +358,7 @@ func (proxy *Server) pinOpHandler(op string, w http.ResponseWriter, r *http.Requ
 
 	q := r.URL.Query()
 	arg := q.Get("arg")
-	p, err := path.ParsePath(arg)
+	p, err := api.ParsePath(arg)
 	if err != nil {
 		ipfsErrorResponder(w, "Error parsing IPFS Path: "+err.Error(), -1)
 		return
@@ -528,13 +527,13 @@ func (proxy *Server) pinUpdateHandler(w http.ResponseWriter, r *http.Request) {
 	to := args[1]
 
 	// Parse paths (we will need to resolve them)
-	pFrom, err := path.ParsePath(from)
+	pFrom, err := api.ParsePath(from)
 	if err != nil {
 		ipfsErrorResponder(w, "error parsing \"from-path\" argument: "+err.Error(), -1)
 		return
 	}
 
-	pTo, err := path.ParsePath(to)
+	pTo, err := api.ParsePath(to)
 	if err != nil {
 		ipfsErrorResponder(w, "error parsing \"to-path\" argument: "+err.Error(), -1)
 		return
