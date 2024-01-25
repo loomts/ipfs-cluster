@@ -880,7 +880,7 @@ func (ipfs *Connector) Resolve(ctx context.Context, path string) (api.Cid, error
 		logger.Error("could not parse path: " + err.Error())
 		return api.CidUndef, err
 	}
-	if !strings.HasPrefix(path, "/ipns") && validPath.Mutable() {
+	if !strings.HasPrefix(path, "/ipns") && !validPath.Mutable() {
 		fpath, err := gopath.NewImmutablePath(validPath)
 		if err != nil {
 			return api.CidUndef, err
