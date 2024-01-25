@@ -153,6 +153,8 @@ func (ipfs *mockConnector) BlockGet(ctx context.Context, c api.Cid) ([]byte, err
 	return d.([]byte), nil
 }
 
+func (ipfs *mockConnector) FileGet(ctx context.Context, fpath string) ([]byte, error)
+
 type mockTracer struct {
 	mockComponent
 }

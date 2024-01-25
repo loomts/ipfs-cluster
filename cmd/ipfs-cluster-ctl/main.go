@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,9 +15,7 @@ import (
 	uuid "github.com/google/uuid"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/api/rest/client"
-	ipfspath "github.com/ipfs/boxo/path"
 	logging "github.com/ipfs/go-log/v2"
-	ipfsapi "github.com/ipfs/kubo/client/rpc"
 	peer "github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 	cli "github.com/urfave/cli"
@@ -302,20 +299,6 @@ P.S. You can use ipfs get instead of ipfs-cluster-ctl ecget if you do not use Er
 					checkErr("parsing cid", err)
 					err = globalClient.ECGet(ctx, ci)
 					checkErr("ecget", err)
-					ipfsAPI, err := ipfsapi.NewLocalApi()
-					checkErr("ecget", err)
-					err = ipfsAPI.Request("version").Exec(ctx, nil)
-					checkErr("ecget", err)
-					var id struct{ ID string }
-					err = ipfsAPI.Request("id").Exec(ctx, &id)
-					checkErr("ecget", err)
-					err = ipfsAPI.Swarm().Connect(ctx, peer.AddrInfo{ID: peer.ID(id.ID)})
-					checkErr("ecget", err)
-					p := ipfspath.FromCid(ci.Cid)
-					out, err := ipfsAPI.Unixfs().Get(ctx, p)
-					checkErr("ecget", err)
-					pwd, _ := os.Getwd()
-					err = client.WriteTo(out, filepath.Join(pwd, ci.String()), true)
 				} else {
 					checkErr("", errors.New("need a cid"))
 				}

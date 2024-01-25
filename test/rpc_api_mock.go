@@ -98,7 +98,7 @@ func (mock *mockCluster) PinPath(ctx context.Context, in api.PinPath, out *api.P
 		return err
 	}
 	var pin api.Pin
-	if p.Mutable() && !strings.HasPrefix(in.Path, "/ipns") {
+	if !strings.HasPrefix(in.Path, "/ipns") && !p.Mutable() {
 		fpath, err := gopath.NewImmutablePath(p)
 		if err != nil {
 			return err

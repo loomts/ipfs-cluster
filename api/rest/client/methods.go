@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path"
@@ -14,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cheggaaa/pb"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
 	files "github.com/ipfs/boxo/files"
+	"github.com/ipfs/boxo/tar"
 	peer "github.com/libp2p/go-libp2p/core/peer"
 
 	"go.opencensus.io/trace"
@@ -710,9 +709,9 @@ func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid) error {
 	ctx, span := trace.StartSpan(ctx, "client/ECGet")
 	defer span.End()
 
-	var f files.Node
+	var b []byte
 	handler := func(dec *json.Decoder) error {
-		err := dec.Decode(&f)
+		err := dec.Decode(&b)
 		if err != nil {
 			return err
 		}
@@ -720,63 +719,12 @@ func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid) error {
 	}
 
 	err := c.doStream(ctx, "GET", fmt.Sprintf("/ecget/%s", ci.String()), nil, nil, handler)
-	p, _ := os.Getwd()
-	err = WriteTo(f, filepath.Join(p, ci.String()), true)
-	return err
-}
-
-// WriteTo writes the given node to the local filesystem at fpath.
-func WriteTo(nd files.Node, fpath string, progress bool) error {
-	s, err := nd.Size()
 	if err != nil {
 		return err
 	}
-
-	var bar *pb.ProgressBar
-	if progress {
-		bar = pb.New64(s).Start()
-	}
-
-	return writeToRec(nd, fpath, bar)
-}
-
-func writeToRec(nd files.Node, fpath string, bar *pb.ProgressBar) error {
-	switch nd := nd.(type) {
-	case *files.Symlink:
-		return os.Symlink(nd.Target, fpath)
-	case files.File:
-		f, err := os.Create(fpath)
-		defer f.Close()
-		if err != nil {
-			return err
-		}
-
-		var r io.Reader = nd
-		if bar != nil {
-			r = bar.NewProxyReader(r)
-		}
-		_, err = io.Copy(f, r)
-		if err != nil {
-			return err
-		}
-		return nil
-	case files.Directory:
-		err := os.Mkdir(fpath, 0777)
-		if err != nil {
-			return err
-		}
-
-		entries := nd.Entries()
-		for entries.Next() {
-			child := filepath.Join(fpath, entries.Name())
-			if err := writeToRec(entries.Node(), child, bar); err != nil {
-				return err
-			}
-		}
-		return entries.Err()
-	default:
-		return fmt.Errorf("file type %T at %q is not supported", nd, fpath)
-	}
+	p, _ := os.Getwd()
+	extractor := &tar.Extractor{Path: path.Join(p, ci.String())}
+	return extractor.Extract(bytes.NewReader(b))
 }
 
 func (c *defaultClient) ECRecovery(ctx context.Context, out chan<- api.Pin) error {

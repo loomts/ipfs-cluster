@@ -12,26 +12,26 @@ This work can be divided into three parts.
 3. Data Recovery: We use `clusterPin` store the cid of data and parity shards as well as the size of data shards. During reconstruction, we set a timeout and attempt to retrieve data and parity shards separately. If some data shards are broken, we finally use ReedSolomon module to reconstruct and repin the file. **However, ReedSolomon has a limit**, only the sum of the number of existing data shards and party shards needs to be greater than the number of total data shards, can we reconstruct all data shards and piece together the complete data.
 
 ### TODO
-The basic functions about Erasure Coding have been implemented. But still something need to be optimize.
+The basic functions about Erasure Coding have been implemented. But still something needs to be optimized.
 
 1. Send parity shards to one peer via a single stream.
-2. `ecget` command can only resolve file but cannot resolve folder.
-3. Currently, we use the `sharding/dag_service` to store the original file and `single/dag_service` to store single files. More elegant way is to create a new `adder` module to combine them.
-4. Sometimes, peers store a different number of shards, when an important node (stores the largest number of shards) is down, it's difficult to meet the requirements for recovering data. We need to use a better mechanism to fit specific RS(d:p) and ensure more peers leaving the cluster.
+2. Currently, we use the `sharding/dag_service` to store the original file and `single/dag_service` to store single files. More elegant way is to create a new `adder` module to combine them.
+3. Sometimes, peers store a different number of shards, when an important node (stores the largest number of shards) is down, it's difficult to meet the requirements for recovering data. We need to use a better mechanism to fit specific RS(d:p) and ensure more peers leaving the cluster.
 
 ### Usage
 - ipfs-cluster-ctl Command
 
 `add`: Added erasure coding params, build and type `ipfs-cluster-ctl add -h` for details.
-> P.S. when use --erasure, means that also enable raw-leaves and shard
+> P.S. when use --erasure, means that also enables raw-leaves and shard
 
-`ecget`: Get erasure file by cid, if file was broken(canot get all shards) it will automatically recovery it.
+`ecget`: Get erasure file by cid, if file was broken(canot get all shards) it will automatically recovery it. 
+> P.S. Shell command can download file and directory directly. But rpc `Cluster.ECGet` can only get []byte, need to use `tar.Extractor` to extract it to FileSystem
 
 `ecrecovery`: Scan all erasure coding files pinned, if some files broken then try to recovery.
 
 - shell test script
 
-This script use docker build 3 IPFS-Cluster peers, pin tmpfile to cluster, make peer down, and recovery tmpfile.
+This script uses docker build 3 IPFS-Cluster peers, pin tmpfile to cluster, make peer down, and recovery tmpfile.
 
 ```zsh
 #!/bin/zsh
@@ -62,8 +62,8 @@ x=$(dctl status --filter pinned | grep cluster | awk -F'cluster' '{print $2}' | 
 docker stop "cluster$x" "ipfs$x"
 
 sleep 1
-dctl status --filter pinned
 dctl ipfs gc
+dctl status --filter pinned
 sleep 1
 
 output=$(dctl ecrecovery | awk '{print $1}')

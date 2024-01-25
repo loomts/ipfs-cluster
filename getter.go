@@ -31,12 +31,14 @@ func init() {
 type dagSession struct {
 	ctx      context.Context
 	blockGet func(ctx context.Context, ci api.Cid) ([]byte, error)
+	fileGet  func(ctx context.Context, fpath string) ([]byte, error)
 }
 
-func NewDagGetter(ctx context.Context, f func(ctx context.Context, ci api.Cid) ([]byte, error)) *dagSession {
+func NewDagGetter(ctx context.Context, bg func(ctx context.Context, ci api.Cid) ([]byte, error), fg func(ctx context.Context, fpath string) ([]byte, error)) *dagSession {
 	return &dagSession{
 		ctx:      ctx,
-		blockGet: f,
+		blockGet: bg,
+		fileGet:  fg,
 	}
 }
 
@@ -113,7 +115,6 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dataShardNum 
 			resultCh := make(chan []byte)
 			errCh := make(chan error)
 			go func() {
-				// fmt.Printf("shard%d cid:%s type:%v codec:%v, version:%v,Mtype:%v,Mlength:%v\n", i, sh.Cid, sh.Cid.Type(), sh.Cid.Prefix().Codec, sh.Cid.Prefix().Version, sh.Cid.Prefix().MhType, sh.Cid.Prefix().MhLength)
 				vect, err := ds.ECLink2Raw(ctx, sh, i < dataShardNum)
 				if err != nil {
 					errCh <- err
@@ -148,12 +149,12 @@ func (ds *dagSession) ResolveCborLinks(ctx context.Context, shard api.Cid) ([]*f
 		return nil, err
 	}
 
-	blocks := clusterDAGNode.Links()
-	links := make([]*format.Link, 0, len(blocks))
+	blks := clusterDAGNode.Links()
+	links := make([]*format.Link, 0, len(blks))
 	var errs error
 	// traverse shard in order
-	// blocks -> 0,cid0; 1,cid1
-	for i := 0; i < len(blocks); i++ {
+	// blks -> 0,cid0; 1,cid1
+	for i := 0; i < len(blks); i++ {
 		sh, _, err := clusterDAGNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
 		if err != nil {
 			err = fmt.Errorf("cannot resolve %dst data shard: %s", i, err)
@@ -172,7 +173,6 @@ func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, isDataLin
 	}
 
 	var links []*format.Link
-
 	if isDataLink {
 		links, err = ds.ResolveCborLinks(ctx, api.NewCid(sh.Cid)) // get sorted data shards
 		if err != nil {

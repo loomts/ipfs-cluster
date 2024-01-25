@@ -880,7 +880,7 @@ func (ipfs *Connector) Resolve(ctx context.Context, path string) (api.Cid, error
 		logger.Error("could not parse path: " + err.Error())
 		return api.CidUndef, err
 	}
-	if !strings.HasPrefix(path, "/ipns") && validPath.Mutable() {
+	if !strings.HasPrefix(path, "/ipns") && !validPath.Mutable() {
 		fpath, err := gopath.NewImmutablePath(validPath)
 		if err != nil {
 			return api.CidUndef, err
@@ -1183,6 +1183,21 @@ func (ipfs *Connector) BlockGet(ctx context.Context, c api.Cid) ([]byte, error) 
 	defer cancel()
 	url := "block/get?arg=" + c.String()
 	return ipfs.postCtx(ctx, url, "", nil)
+}
+
+func (ipfs *Connector) FileGet(ctx context.Context, fpath string) ([]byte, error) {
+	ctx, span := trace.StartSpan(ctx, "ipfsconn/ipfshttp/FileGet")
+	defer span.End()
+
+	ctx, cancel := context.WithTimeout(ctx, ipfs.config.IPFSRequestTimeout)
+	defer cancel()
+	url := "get?arg=" + fpath
+	reader, err := ipfs.postCtxStreamResponse(ctx, url, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return io.ReadAll(reader)
 }
 
 // // FetchRefs asks IPFS to download blocks recursively to the given depth.
