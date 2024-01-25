@@ -7,6 +7,7 @@ import (
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/state"
 	"github.com/ipfs-cluster/ipfs-cluster/version"
+	"github.com/ipfs/boxo/files"
 
 	rpc "github.com/libp2p/go-libp2p-gorpc"
 	peer "github.com/libp2p/go-libp2p/core/peer"
@@ -442,12 +443,12 @@ func (rpcapi *ClusterRPCAPI) IPFSID(ctx context.Context, in peer.ID, out *api.IP
 }
 
 // ECGet Erasure Coding Get, get and reconstruct file if needed
-func (rpcapi *ClusterRPCAPI) ECGet(ctx context.Context, in api.Cid, out *[]byte) error {
-	b, err := rpcapi.c.ECGet(ctx, in)
+func (rpcapi *ClusterRPCAPI) ECGet(ctx context.Context, in api.Cid, out *files.Node) error {
+	f, err := rpcapi.c.ECGet(ctx, in)
 	if err != nil {
 		return err
 	}
-	*out = b
+	*out = f
 	return nil
 }
 

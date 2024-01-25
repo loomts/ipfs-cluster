@@ -80,7 +80,7 @@ func (c *defaultClient) PeerRm(ctx context.Context, id peer.ID) error {
 	ctx, span := trace.StartSpan(ctx, "client/PeerRm")
 	defer span.End()
 
-	return c.do(ctx, "DELETE", fmt.Sprintf("/peers/%s", id.Pretty()), nil, nil, nil)
+	return c.do(ctx, "DELETE", fmt.Sprintf("/peers/%s", id.Loggable()), nil, nil, nil)
 }
 
 // Pin tracks a Cid with the given replication factor and a name for
@@ -124,7 +124,7 @@ func (c *defaultClient) PinPath(ctx context.Context, path string, opts api.PinOp
 	defer span.End()
 
 	var pin api.Pin
-	ipfspath, err := gopath.ParsePath(path)
+	ipfspath, err := gopath.NewPath(path)
 	if err != nil {
 		return api.Pin{}, err
 	}
@@ -155,7 +155,7 @@ func (c *defaultClient) UnpinPath(ctx context.Context, p string) (api.Pin, error
 	defer span.End()
 
 	var pin api.Pin
-	ipfspath, err := gopath.ParsePath(p)
+	ipfspath, err := gopath.NewPath(p)
 	if err != nil {
 		return api.Pin{}, err
 	}
@@ -711,9 +711,9 @@ func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid) error {
 	ctx, span := trace.StartSpan(ctx, "client/ECGet")
 	defer span.End()
 
-	var b []byte
+	var f files.Node
 	handler := func(dec *json.Decoder) error {
-		err := dec.Decode(&b)
+		err := dec.Decode(&f)
 		if err != nil {
 			return err
 		}
@@ -722,31 +722,62 @@ func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid) error {
 
 	err := c.doStream(ctx, "GET", fmt.Sprintf("/ecget/%s", ci.String()), nil, nil, handler)
 	p, _ := os.Getwd()
-	err = writeFile(b, filepath.Join(p, ci.String()), true)
+	err = WriteTo(f, filepath.Join(p, ci.String()), true)
 	return err
 }
 
-// writeFile write file to local disk
-func writeFile(b []byte, fpath string, progress bool) error {
+// WriteTo writes the given node to the local filesystem at fpath.
+func WriteTo(nd files.Node, fpath string, progress bool) error {
+	s, err := nd.Size()
+	if err != nil {
+		return err
+	}
+
 	var bar *pb.ProgressBar
 	if progress {
-		bar = pb.New(len(b)).Start()
-		defer bar.Finish()
+		bar = pb.New64(s).Start()
 	}
-	f, err := os.Create(fpath)
-	defer f.Close()
-	if err != nil {
-		return err
+
+	return writeToRec(nd, fpath, bar)
+}
+
+func writeToRec(nd files.Node, fpath string, bar *pb.ProgressBar) error {
+	switch nd := nd.(type) {
+	case *files.Symlink:
+		return os.Symlink(nd.Target, fpath)
+	case files.File:
+		f, err := os.Create(fpath)
+		defer f.Close()
+		if err != nil {
+			return err
+		}
+
+		var r io.Reader = nd
+		if bar != nil {
+			r = bar.NewProxyReader(r)
+		}
+		_, err = io.Copy(f, r)
+		if err != nil {
+			return err
+		}
+		return nil
+	case files.Directory:
+		err := os.Mkdir(fpath, 0777)
+		if err != nil {
+			return err
+		}
+
+		entries := nd.Entries()
+		for entries.Next() {
+			child := filepath.Join(fpath, entries.Name())
+			if err := writeToRec(entries.Node(), child, bar); err != nil {
+				return err
+			}
+		}
+		return entries.Err()
+	default:
+		return fmt.Errorf("file type %T at %q is not supported", nd, fpath)
 	}
-	var r io.Reader = bytes.NewReader(b)
-	if bar != nil {
-		r = bar.NewProxyReader(r)
-	}
-	_, err = io.Copy(f, r)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (c *defaultClient) ECRecovery(ctx context.Context, out chan<- api.Pin) error {

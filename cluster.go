@@ -22,6 +22,7 @@ import (
 	"go.uber.org/multierr"
 
 	"github.com/ipfs/boxo/files"
+	unixfile "github.com/ipfs/boxo/ipld/unixfs/file"
 	ds "github.com/ipfs/go-datastore"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
 	dual "github.com/libp2p/go-libp2p-kad-dht/dual"
@@ -134,7 +135,7 @@ func NewCluster(
 
 	listenAddrs := ""
 	for _, addr := range host.Addrs() {
-		listenAddrs += fmt.Sprintf("        %s/p2p/%s\n", addr, host.ID().Pretty())
+		listenAddrs += fmt.Sprintf("        %s/p2p/%s\n", addr, host.ID().String())
 	}
 
 	logger.Infof("IPFS Cluster v%s listening on:\n%s\n", version.Version, listenAddrs)
@@ -1723,7 +1724,9 @@ func (c *Cluster) UnpinPath(ctx context.Context, path string) (api.Pin, error) {
 // sharded across the entire cluster.
 func (c *Cluster) AddFile(ctx context.Context, reader *multipart.Reader, params api.AddParams) (api.Cid, error) {
 	// TODO: add context param and tracing
-
+	if params.Erasure {
+		params.RawLeaves = true
+	}
 	var dags adder.ClusterDAGService
 	if params.Shard {
 		dags = sharding.New(ctx, c.rpcClient, params, nil)
@@ -2288,7 +2291,19 @@ func (c *Cluster) RepoGCLocal(ctx context.Context) (api.RepoGC, error) {
 	return resp, nil
 }
 
-func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) ([]byte, error) {
+// func http(ctx context.Context) (iface.CoreAPI, error) {
+// 	httpAPI, err := ipfsapi.NewLocalApi()
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	err = httpAPI.Request("version").Exec(ctx, nil)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return httpAPI, nil
+// }
+
+func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) (files.Node, error) {
 	ctx, span := trace.StartSpan(ctx, "cluster/ECGet")
 	defer span.End()
 	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
@@ -2302,7 +2317,26 @@ func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) ([]byte, error) {
 			logger.Errorf("error ECReAllocate failed: %s", err)
 		}
 	}
-	return b, err
+	// ipfs, err := http(ctx)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// id, err := c.ipfs.ID(ctx)
+	// err = ipfs.Swarm().Connect(ctx, peer.AddrInfo{ID: id.ID})
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// p := path.IpfsPath(ci.Cid)
+	// out, err := ipfs.Unixfs().Get(ctx, p)
+	nd, err := dgs.Get(ctx, ci.Cid)
+	if err != nil {
+		return nil, err
+	}
+	file, err := unixfile.NewUnixfsFile(ctx, dgs, nd)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
 }
 
 func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSession) ([]byte, bool, error) {
@@ -2429,7 +2463,6 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 				pin, err := c.PinGet(ctx, ci)
 				if err != nil {
 					logger.Error(err)
-					
 				}
 				out <- pin
 			}(p.Cid)

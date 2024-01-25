@@ -175,13 +175,6 @@ func AddParamsFromQuery(query url.Values) (AddParams, error) {
 	if err != nil {
 		return params, err
 	}
-	err = parseBoolParam(query, "erasure", &params.Erasure)
-	if err != nil {
-		return params, err
-	}
-	if params.Erasure && params.Shard {
-		params.RawLeaves = true
-	}
 	shardSize := int(DefaultShardSize)
 	err = parseIntParam(query, "shard-size", &shardSize)
 	if err != nil {
@@ -218,7 +211,14 @@ func AddParamsFromQuery(query url.Values) (AddParams, error) {
 	if err != nil {
 		return params, err
 	}
-
+	err = parseBoolParam(query, "erasure", &params.Erasure)
+	if err != nil {
+		return params, err
+	}
+	if params.Erasure {
+		params.Shard = true
+		params.RawLeaves = true
+	}
 	err = parseBoolParam(query, "stream-channels", &params.StreamChannels)
 	if err != nil {
 		return params, err

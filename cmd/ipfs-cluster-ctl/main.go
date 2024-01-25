@@ -8,16 +8,18 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/api/rest/client"
+	ipfspath "github.com/ipfs/boxo/path"
 	logging "github.com/ipfs/go-log/v2"
+	ipfsapi "github.com/ipfs/kubo/client/rpc"
 	peer "github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
-
 	uuid "github.com/google/uuid"
 	cli "github.com/urfave/cli"
 )
@@ -300,6 +302,21 @@ P.S. You can use ipfs get instead of ipfs-cluster-ctl ecget if you do not use Er
 					checkErr("parsing cid", err)
 					err = globalClient.ECGet(ctx, ci)
 					checkErr("ecget", err)
+					ipfsAPI, err := ipfsapi.NewLocalApi()
+					checkErr("ecget", err)
+					err = ipfsAPI.Request("version").Exec(ctx, nil)
+					checkErr("ecget", err)
+					var id struct{ ID string }
+					err = ipfsAPI.Request("id").Exec(ctx, &id)
+					checkErr("ecget", err)
+					err = ipfsAPI.Swarm().Connect(ctx, peer.AddrInfo{ID: peer.ID(id.ID)})
+					checkErr("ecget", err)
+					p, err := ipfspath.NewPath(ci.String())
+					checkErr("ecget", err)
+					out, err := ipfsAPI.Unixfs().Get(ctx, p)
+					checkErr("ecget", err)
+					pwd, _ := os.Getwd()
+					err = client.WriteTo(out, filepath.Join(pwd, ci.String()), true)
 				} else {
 					checkErr("", errors.New("need a cid"))
 				}
@@ -548,8 +565,8 @@ automatically generated.
 				}
 				p.NoPin = c.Bool("no-pin")
 				p.Format = c.String("format")
-				p.Shard = shard
-				p.Erasure = p.Shard && c.Bool("erasure")
+				p.Erasure = c.Bool("erasure")
+				p.Shard = shard || p.Erasure
 				p.DataShards = c.Int("data-shards")
 				p.ParityShards = c.Int("parity-shards")
 				p.ShardSize = c.Uint64("shard-size")
@@ -557,7 +574,7 @@ automatically generated.
 				p.Local = c.Bool("local")
 				p.Layout = c.String("layout")
 				p.Chunker = c.String("chunker")
-				p.RawLeaves = c.Bool("raw-leaves")
+				p.RawLeaves = c.Bool("raw-leaves") || p.Erasure
 				p.Hidden = c.Bool("hidden")
 				p.Wrap = c.Bool("wrap-with-directory") || len(paths) > 1
 				p.CidVersion = c.Int("cid-version")
@@ -565,7 +582,7 @@ automatically generated.
 				if p.HashFun != defaultAddParams.HashFun {
 					p.CidVersion = 1
 				}
-				if p.CidVersion > 0 || p.Erasure {
+				if p.CidVersion > 0 {
 					p.RawLeaves = true
 				}
 				p.NoCopy = c.Bool("nocopy")
