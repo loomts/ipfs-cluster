@@ -2,6 +2,7 @@ package sharding
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -30,9 +31,33 @@ type shard struct {
 	// dagNode represents a node with links and will be converted
 	// to Cbor.
 	dagNode     map[string]cid.Cid
+	blockMeta   []ECBlockMeta
 	currentSize uint64
 	sizeLimit   uint64
 	erasure     bool
+}
+type ECBlockMeta struct {
+	ShardNo int
+	BlockNo int
+	Size    uint64
+	Cid     string
+}
+
+func (e ECBlockMeta) String() string {
+	bytes, err := json.Marshal(e)
+	if err != nil {
+		logger.Error(err)
+	}
+	return string(bytes)
+}
+
+func UnmarshalECBlockMeta(s string) (ECBlockMeta, error) {
+	var meta ECBlockMeta
+	err := json.Unmarshal([]byte(s), &meta)
+	if err != nil {
+		return ECBlockMeta{}, err
+	}
+	return meta, nil
 }
 
 func newShard(globalCtx context.Context, ctx context.Context, rpc *rpc.Client, opts api.PinOptions, idx int, erasure bool) (*shard, error) {
@@ -71,6 +96,7 @@ func newShard(globalCtx context.Context, ctx context.Context, rpc *rpc.Client, o
 		bs:          adder.NewBlockStreamer(globalCtx, rpc, allocs, blocks),
 		blocks:      blocks,
 		dagNode:     make(map[string]cid.Cid),
+		blockMeta:   make([]ECBlockMeta, 0, 256),
 		currentSize: 0,
 		sizeLimit:   opts.ShardSize,
 		erasure:     erasure,
@@ -118,7 +144,7 @@ func (sh *shard) Close() error {
 // shard.
 func (sh *shard) Flush(ctx context.Context, shardN int, prev cid.Cid) (cid.Cid, error) {
 	logger.Debugf("shard %d: flush", shardN)
-	nodes, err := makeDAG(ctx, sh.dagNode)
+	nodes, err := MakeDAG(ctx, sh.dagNode)
 	if err != nil {
 		return cid.Undef, err
 	}

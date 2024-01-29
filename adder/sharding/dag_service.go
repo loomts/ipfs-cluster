@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 
 	humanize "github.com/dustin/go-humanize"
+	dag "github.com/ipfs/boxo/ipld/merkledag"
 	cid "github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log/v2"
@@ -53,6 +53,8 @@ type DAGService struct {
 	totalSize uint64
 	// erasure coding
 	rs *ec.ReedSolomon
+	// record blocksize to metadata, enable erasure find each block
+	blockMeta []ECBlockMeta
 }
 
 // New returns a new ClusterDAGService, which uses the given rpc client to perform
@@ -69,6 +71,7 @@ func New(ctx context.Context, rpc *rpc.Client, opts api.AddParams, out chan<- ap
 		shards:    make(map[string]cid.Cid),
 		startTime: time.Now(),
 		rs:        ec.New(ctx, opts.DataShards, opts.ParityShards, int(opts.ShardSize)),
+		blockMeta: make([]ECBlockMeta, 0, 1024),
 	}
 }
 
@@ -107,7 +110,7 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 		}
 	}
 	// clusterDAG
-	clusterDAGNodes, err := makeDAG(ctx, shardMeta)
+	clusterDAGNodes, err := MakeDAG(ctx, shardMeta)
 	if err != nil {
 		return dataRoot, err
 	}
@@ -155,8 +158,14 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	clusterDAGPin.Reference = &dataRoot
 	dataShardSize := dgs.rs.GetDataShardSize()
 	// record data shard size to metadata, enable erasure module know data size and the number.
+	fmt.Println("==============")
 	for i, size := range dataShardSize {
+		fmt.Println(i, size)
 		clusterDAGPin.Metadata[i] = fmt.Sprintf("%d", size)
+	}
+	for _, bmeta := range dgs.blockMeta {
+		fmt.Println(bmeta)
+		clusterDAGPin.Metadata[bmeta.String()] = ""
 	}
 	// Update object with response.
 	err = adder.Pin(ctx, dgs.rpcClient, clusterDAGPin)
@@ -171,7 +180,6 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	metaPin.Reference = &ref
 	metaPin.MaxDepth = 0 // irrelevant. Meta-pins are not pinned
 	metaPin.Metadata = nil
-	metaPin.ShardSize = dgs.addParams.ShardSize
 	err = adder.Pin(ctx, dgs.rpcClient, metaPin)
 	if err != nil {
 		return dataRoot, err
@@ -234,14 +242,27 @@ func (dgs *DAGService) ingestBlock(ctx context.Context, n ipld.Node) error {
 	size := uint64(len(n.RawData()))
 	// add the block to it if it fits and return
 	if shard.Size()+size < shard.Limit() {
-		if dgs.addParams.Erasure && !strings.HasPrefix(n.Cid().String(), "Qm") {
-			// V0 cid("Qm...") is not data block
-			shard.AddLink(ctx, n.Cid(), size)
+		if dgs.addParams.Erasure {
 			dgs.rs.SendBlockTo() <- ec.StatBlock{Node: n, Stat: ec.DefaultBlock}
-		} else if !dgs.addParams.Erasure {
-			// not ensure if common sharding need Qm prefix cid, so remain the same as before.
-			shard.AddLink(ctx, n.Cid(), size)
+			// record block metadata
+			var nb ipld.Node
+			switch n.(type) {
+			case *dag.ProtoNode:
+				nb = n.(*dag.ProtoNode)
+			case *dag.RawNode:
+				nb = n.(*dag.RawNode)
+			default:
+				logger.Errorf("ingestBlock unknown node type:%v", n)
+			}
+			meta := ECBlockMeta{
+				ShardNo: len(dgs.shards),
+				BlockNo: len(shard.blockMeta),
+				Size:    size,
+				Cid:     nb.Cid().String(),
+			}
+			shard.blockMeta = append(shard.blockMeta, meta)
 		}
+		shard.AddLink(ctx, n.Cid(), size)
 		return dgs.currentShard.sendBlock(ctx, n)
 	}
 
@@ -324,6 +345,9 @@ func (dgs *DAGService) FlushCurrentShard(ctx context.Context) (api.Cid, error) {
 	}
 	dgs.totalSize += shard.Size()
 	dgs.shards[fmt.Sprintf("%d", lens)] = shardCid
+	for _, bmeta := range shard.blockMeta {
+		dgs.blockMeta = append(dgs.blockMeta, bmeta)
+	}
 	dgs.previousShard = shardCid
 	dgs.currentShard = nil
 	dgs.sendOutput(api.AddedOutput{

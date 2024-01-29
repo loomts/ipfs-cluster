@@ -1,47 +1,86 @@
 package erasure
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"io"
+	"fmt"
+	"github.com/ipfs-cluster/ipfs-cluster/adder/ipfsadd"
+	"github.com/ipfs-cluster/ipfs-cluster/test"
+	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/multiformats/go-multihash"
+	"strings"
 	"testing"
 
-	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs-cluster/ipfs-cluster/api"
+	"github.com/ipfs/boxo/files"
+	ipld "github.com/ipfs/go-ipld-format"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSplitAndRecon(t *testing.T) {
-	fileSize := 1024*6 + 1
-	blockSize := 1024
-	shardSize := 1024 * 5
-	originData := make([]byte, fileSize)
-	_, err := rand.Read(originData)
-	assert.Nil(t, err)
+var nodeCh chan ipld.Node
+
+// test more type in the future
+func TestAll(t *testing.T) {
+	blockSize := 256 * 1024
+	shardSize := blockSize*2 + 1
+	fileSize := shardSize*4 + 1
+	nodeCh = make(chan ipld.Node, 1024)
+	dir, sth := NewDirectory(t)
+	defer sth.Clean(t)
+	SplitAndRecon(t, test.NewMockDAGService(false), NewRandFile(fileSize), shardSize)
+	SplitAndRecon(t, test.NewMockDAGService(false), dir, shardSize)
+}
+
+func NewNodeFromBytesAndDAGService(file files.Node, dg ipld.DAGService) (ipld.Node, error) {
+	params := api.DefaultAddParams()
+	iadder, err := ipfsadd.NewAdder(context.Background(), newMockCDAGServ(dg), nil)
+	iadder.Trickle = params.Layout == "trickle"
+	iadder.RawLeaves = params.RawLeaves
+	iadder.Chunker = params.Chunker
+	iadder.Progress = params.Progress
+	iadder.NoCopy = params.NoCopy
+
+	// Set up prefix
+	prefix, err := merkledag.PrefixForCidVersion(params.CidVersion)
+	if err != nil {
+		return nil, fmt.Errorf("bad CID Version: %s", err)
+	}
+
+	hashFunCode, ok := multihash.Names[strings.ToLower(params.HashFun)]
+	if !ok {
+		return nil, errors.New("hash function name not known")
+	}
+	prefix.MhType = hashFunCode
+	prefix.MhLength = -1
+	iadder.CidBuilder = &prefix
+	return iadder.AddAllAndPin(file)
+}
+
+func SplitAndRecon(t *testing.T, dgs ipld.DAGService, file files.Node, shardSize int) {
+	fileSize, _ := file.Size()
 	rs := New(context.Background(), 4, 2, shardSize)
 	// send blocks and receive parityVects shards
 	dataVects := make([][]byte, 1)
-	b := make([]byte, blockSize)
-	r := bytes.NewReader(originData)
+	root, err := NewNodeFromBytesAndDAGService(file, dgs)
+	assert.Nil(t, err)
 	curSize := 0
+	sum := 0
 	for {
-		end := false
-		s, err := r.Read(b)
-		if err == io.EOF {
-			end = true
-		}
-		bb := make([]byte, s)
-		copy(bb, b[:s])
-		n := merkledag.NewRawNode(bb)
-		if curSize+s > shardSize {
+		n := <-nodeCh
+		s, _ := n.Size()
+		if curSize+int(s) > shardSize {
 			rs.SendBlockTo() <- StatBlock{Stat: ShardEndBlock}
 			curSize = 0
 			dataVects = append(dataVects, make([]byte, 0))
 		}
-		curSize += s
-		dataVects[len(dataVects)-1] = append(dataVects[len(dataVects)-1], bb...)
+		curSize += int(s)
+		sum += int(s)
+		dataVects[len(dataVects)-1] = append(dataVects[len(dataVects)-1], n.RawData()...)
 		rs.SendBlockTo() <- StatBlock{Node: n, Stat: DefaultBlock}
-		if end {
+		fmt.Printf("fileSize:%d, sum:%d, cursize:%d, shardSize:%d\n", fileSize, sum, curSize, shardSize)
+		if root.Cid() == n.Cid() {
 			if curSize > 0 {
 				rs.SendBlockTo() <- StatBlock{Stat: ShardEndBlock}
 			}
@@ -57,18 +96,68 @@ func TestSplitAndRecon(t *testing.T) {
 		}
 		parityVects = append(parityVects, p.RawData)
 	}
-	// verify
-	for i, vect := range dataVects {
-		assert.Equal(t, originData[i*shardSize:min((i+1)*shardSize, len(originData))], vect)
-	}
+
+	// record the size of origin data shards, for verify
 	dShardSize := make([]int, len(dataVects))
 	for i, vect := range dataVects {
 		dShardSize[i] = len(vect)
 	}
+	preData0 := make([]byte, len(dataVects[0]))
+	copy(preData0, dataVects[0])
 	dataVects[0] = nil
+	dataVects[3] = nil
 	err = rs.SplitAndRecon(dataVects, parityVects, dShardSize)
 	assert.Nil(t, err)
-	for i, vect := range dataVects {
-		assert.Equal(t, originData[i*shardSize:min((i+1)*shardSize, len(originData))], vect)
+	assert.Equal(t, preData0, dataVects[0])
+}
+
+func NewRandFile(fileSize int) files.Node {
+	data := make([]byte, fileSize)
+	rand.Read(data)
+	return files.NewMapDirectory(map[string]files.Node{"Reed-Solomon-test-file": files.NewBytesFile(data)})
+}
+
+func NewDirectory(t *testing.T) (files.Node, *test.ShardingTestHelper) {
+	sth := test.NewShardingTestHelper()
+	dir := sth.GetTreeSerialFile(t)
+	return files.NewMapDirectory(map[string]files.Node{"Reed-Solomon-test-dir": dir}), sth
+}
+
+type mockCDAGServ struct {
+	ipld.DAGService
+}
+
+func newMockCDAGServ(dgs ipld.DAGService) *mockCDAGServ {
+	return &mockCDAGServ{
+		DAGService: dgs,
 	}
+}
+
+func (dgs *mockCDAGServ) Add(ctx context.Context, node ipld.Node) error {
+	// send node to RS
+	nodeCh <- node
+	return dgs.DAGService.Add(ctx, node)
+}
+
+func (dgs *mockCDAGServ) Finalize(ctx context.Context, root api.Cid) (api.Cid, error) {
+	return root, nil
+}
+
+func (dgs *mockCDAGServ) Allocations() []peer.ID {
+	return nil
+}
+
+func (dgs *mockCDAGServ) GetRS() *ReedSolomon {
+	return nil
+}
+
+func (dgs *mockCDAGServ) SetParity(name string) {
+}
+
+func (dgs *mockCDAGServ) FlushCurrentShard(ctx context.Context) (cid api.Cid, err error) {
+	return api.CidUndef, err
+}
+
+func (dgs *mockCDAGServ) Close() error {
+	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
+	dag "github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log/v2"
@@ -109,7 +110,17 @@ func (r *ReedSolomon) handleBlock() {
 		switch sb.Stat {
 		case DefaultBlock:
 			r.mu.Lock()
-			b := sb.RawData()
+			nd := sb.Node
+			var nb ipld.Node
+			switch nd.(type) {
+			case *dag.ProtoNode:
+				nb = nd.(*dag.ProtoNode)
+			case *dag.RawNode:
+				nb = nd.(*dag.RawNode)
+			default:
+				log.Errorf("unknown node type:%v", nd)
+			}
+			b := nb.RawData()
 			if r.curShardJ+len(b) <= r.shardSize {
 				r.blocks[r.curShardI] = append(r.blocks[r.curShardI], b...)
 				r.curShardJ += len(b)
@@ -295,7 +306,7 @@ func (r *ReedSolomon) getShardSizeAndCheck(dVects [][]byte, pVects [][]byte) (in
 			shardSize = max(shardSize, len(v))
 		}
 	}
-	fmt.Printf("dataShards:%d, parityShards:%d,need:%d, shardSize:%d\n", len(dVects), len(pVects), need, shardSize)
+	log.Infof("batch info: dShards:%d, pShards:%d, needRecon:%d, shardSize:%d\n", len(dVects), len(pVects), need, shardSize)
 	if need > r.parityShards {
 		return shardSize, errors.New("data vects not enough, cannot reconstruct")
 	}

@@ -63,14 +63,14 @@ func makeDAGSimple(ctx context.Context, dagObj map[string]cid.Cid) (ipld.Node, e
 	return node, err
 }
 
-// makeDAG parses a dagObj which stores all of the node-links a shardDAG
+// MakeDAG parses a dagObj which stores all of the node-links a shardDAG
 // is responsible for tracking.  In general a single node of links may exceed
 // the capacity of an ipfs block.  In this case an indirect node in the
 // shardDAG is constructed that references "leaf shardNodes" that themselves
 // carry links to the data nodes being tracked. The head of the output slice
 // is always the root of the shardDAG, i.e. the ipld node that should be
 // recursively pinned to track the shard
-func makeDAG(ctx context.Context, dagObj map[string]cid.Cid) ([]ipld.Node, error) {
+func MakeDAG(ctx context.Context, dagObj map[string]cid.Cid) ([]ipld.Node, error) {
 	// FIXME: We have a 4MB limit on the block size enforced by bitswap:
 	// https://github.com/libp2p/go-libp2p/core/blob/master/network/network.go#L23
 
