@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dustin/go-humanize"
 	"github.com/ipfs-cluster/ipfs-cluster/adder"
 	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"github.com/ipfs-cluster/ipfs-cluster/adder/sharding"
@@ -25,7 +24,6 @@ import (
 
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
-	format "github.com/ipfs/go-ipld-format"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
 	dual "github.com/libp2p/go-libp2p-kad-dht/dual"
 	host "github.com/libp2p/go-libp2p/core/host"
@@ -1676,9 +1674,10 @@ func (c *Cluster) PinUpdate(ctx context.Context, from api.Cid, to api.Cid, opts 
 
 	// Hector: I am not sure whether it has any point to update something
 	// like a MetaType.
-	if existing.Type != api.DataType {
-		return api.Pin{}, errors.New("this pin type cannot be updated")
-	}
+	// erasure coding reconstruct (update allocation))))
+	// if existing.Type != api.DataType {
+	// 	return api.Pin{}, errors.New("this pin type cannot be updated")
+	// }
 
 	existing.Cid = to
 	existing.PinUpdate = from
@@ -2297,7 +2296,7 @@ func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) ([]byte, error) {
 	ctx, span := trace.StartSpan(ctx, "cluster/ECGet")
 	defer span.End()
 	dgs := NewDagGetter(ctx, c.ipfs.BlockGet, c.ipfs.FileGet)
-	err := c.ECReConstruct(ctx, ci, dgs)
+	_, err := c.ECReConstruct(ctx, ci, dgs)
 	if err != nil {
 		return nil, fmt.Errorf("error reconstructing file: %s", err)
 	}
@@ -2345,47 +2344,52 @@ func ECExtraMetaData(metadata map[string]string) (map[int][]sharding.ECBlockMeta
 	return bmeta, dss, nil
 }
 
-func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSession) error {
+func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSession) (api.Pin, error) {
 	// try to get shards and reconstruct
 	rootPin, err := c.PinGet(ctx, root)
 	if err != nil {
-		return fmt.Errorf("cid was not pinned: %s", err)
+		return api.Pin{}, fmt.Errorf("cid was not pinned: %s", err)
 	}
 	if rootPin.Type != api.MetaType {
-		return fmt.Errorf("cid not MetaPin type")
+		return api.Pin{}, fmt.Errorf("cid not MetaPin type")
 	}
 	clusterPin, err := c.PinGet(ctx, *rootPin.Reference)
 	if err != nil {
-		return err
+		return api.Pin{}, err
 	}
 	blockMeta, dShardSize, err := ECExtraMetaData(clusterPin.Metadata)
 	if err != nil {
-		return fmt.Errorf("cannot extra erasure coding metadata: %s", err)
+		return api.Pin{}, fmt.Errorf("cannot extra erasure coding metadata: %s", err)
 	}
-	dataVects, parityVects, needRepin, links, err := dgs.ECGetShards(ctx, clusterPin.Cid, len(dShardSize))
+	dataVects, parityVects, needRepin, err := dgs.ECGetShards(ctx, clusterPin.Cid, len(dShardSize))
 	if err != nil {
-		return err
+		return api.Pin{}, err
 	}
 	if len(needRepin) > 0 {
 		err = ec.New(ctx, clusterPin.DataShards, clusterPin.ParityShards, 0).SplitAndRecon(dataVects, parityVects, dShardSize)
 		if err != nil {
-			return err
+			return api.Pin{}, err
 		}
 		b := make([][]byte, len(needRepin))
 		for i, idx := range needRepin {
 			if i < len(dataVects) {
 				b[i] = dataVects[idx]
 			} else {
-				b[i] = parityVects[idx-len(dataVects)] //TODO
+				b[i] = parityVects[idx-len(dataVects)]
 			}
 		}
 		logger.Infof("reconstruct %s success, recover %d shards, total size:%d", rootPin.Cid, len(needRepin), len(b))
-		return c.ECPutShards(ctx, b, needRepin, clusterPin, blockMeta, links, dShardSize)
+		err = c.ECPutShards(ctx, b, needRepin, clusterPin, blockMeta, dShardSize)
+		if err != nil {
+			return api.Pin{}, err
+		}
+		return c.PinGet(ctx, root)
 	}
-	return nil
+	logger.Infof("%s not need to reconstruct", root)
+	return api.Pin{}, nil
 }
 
-func (c *Cluster) ECPutShards(ctx context.Context, shards [][]byte, needRepin []int, clusterPin api.Pin, blockMeta map[int][]sharding.ECBlockMeta, links []*format.Link, dShardSize []int) error {
+func (c *Cluster) ECPutShards(ctx context.Context, shards [][]byte, needRepin []int, clusterPin api.Pin, blockMeta map[int][]sharding.ECBlockMeta, dShardSize []int) error {
 	ctx, span := trace.StartSpan(ctx, "cluster/BlockPut")
 	defer span.End()
 	livePeers, err := adder.BlockAllocate(ctx, c.rpcClient, clusterPin.PinOptions)
@@ -2395,7 +2399,7 @@ func (c *Cluster) ECPutShards(ctx context.Context, shards [][]byte, needRepin []
 
 	var wg sync.WaitGroup
 	wg.Add(len(shards) * 2) // put blocks and pin shards
-	errCh := make(chan error, len(shards))
+	errCh := make(chan error, len(shards)*2)
 
 	// put blocks to ipfs
 	for i := 0; i < len(shards); i++ {
@@ -2443,6 +2447,7 @@ func (c *Cluster) ECPutShards(ctx context.Context, shards [][]byte, needRepin []
 		}(shards[i], blockMeta[needRepin[i]])
 		// pin shards
 		go func(idx int) {
+			wg.Done()
 			// pin shards to ipfs-cluster
 			dagNode := make(map[string]cid.Cid)
 			for _, m := range blockMeta[idx] {
@@ -2454,32 +2459,17 @@ func (c *Cluster) ECPutShards(ctx context.Context, shards [][]byte, needRepin []
 				errCh <- err
 				return
 			}
-			shardPin := api.PinWithOpts(api.NewCid(nodes[0].Cid()), clusterPin.PinOptions)
-			shardPin.Name = fmt.Sprintf("%s-shard-%d", clusterPin.Name, idx)
-			shardPin.Allocations = []peer.ID{p}
-			shardPin.Type = api.ShardType
-			if idx > 0 {
-				ref := api.NewCid(links[idx-1].Cid)
-				shardPin.Reference = &ref
-			}
-			shardPin.MaxDepth = 1
-			shardPin.ShardSize = uint64(dShardSize[idx])
-			if len(nodes) > len(blockMeta[idx])+1 {
-				shardPin.MaxDepth = 2
-			}
-
-			logger.Infof("Erasure Repin shard #%d (%s) completed. Total size: %s. Links: %d",
-				idx,
-				shardPin.Cid,
-				humanize.Bytes(shardPin.ShardSize),
-				len(dagNode),
-			)
-			shardPin.ReplicationFactorMin = 1
-			shardPin.ReplicationFactorMax = 1
-			err = adder.ErasurePin(ctx, c.rpcClient, shardPin)
+			shardCid := nodes[0].Cid()
+			prev, err := c.PinGet(ctx, api.NewCid(shardCid))
 			if err != nil {
 				errCh <- err
 			}
+			prev.Allocations = append(prev.Allocations, p)
+			_, err = c.PinUpdate(ctx, prev.Cid, prev.Cid, prev.PinOptions)
+			if err != nil {
+				errCh <- err
+			}
+			logger.Infof("update %s allocation to %v", shardCid, prev.Allocations)
 		}(needRepin[i])
 	}
 	wg.Wait()
@@ -2490,47 +2480,6 @@ func (c *Cluster) ECPutShards(ctx context.Context, shards [][]byte, needRepin []
 	}
 	return multierr.Combine(errs...)
 }
-
-// func (c *Cluster) ECReAllocate(ctx context.Context, prevCid api.Cid, data []byte) error {
-// 	prev, err := c.PinGet(ctx, prevCid)
-// 	if err != nil {
-// 		return fmt.Errorf("cid was not pinned: %s", err)
-// 	}
-// 	metrics := c.monitor.LatestMetrics(ctx, pingMetricName)
-// 	peers := make([]peer.ID, len(metrics))
-// 	for i, m := range metrics {
-// 		peers[i] = m.Peer
-// 	}
-
-// 	// need to re add file
-// 	shardAddParam := api.DefaultAddParams()
-// 	shardAddParam.Shard = true
-// 	shardAddParam.Erasure = true
-// 	shardAddParam.RawLeaves = true
-// 	shardAddParam.Name = prev.Name
-// 	shardAddParam.ReplicationFactorMin = 1
-// 	shardAddParam.ReplicationFactorMax = 1
-// 	shardAddParam.DataShards = prev.DataShards
-// 	shardAddParam.ParityShards = prev.ParityShards
-// 	shardAddParam.ShardSize = prev.ShardSize
-// 	mapDir := files.NewMapDirectory(map[string]files.Node{prev.Name: files.NewBytesFile(data)})
-
-// 	r := files.NewMultiFileReader(mapDir, true, false)
-// 	mr := multipart.NewReader(r, r.Boundary())
-// 	ci, err := c.AddFile(ctx, mr, shardAddParam)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	if prev.Cid != ci {
-// 		logger.Errorf("reallocated file %s to %s, RollBACK(pin rm %s)", prev.Cid, ci, ci)
-// 		_, err = c.Unpin(ctx, ci)
-// 		if err != nil {
-// 			logger.Error(err)
-// 		}
-// 		return fmt.Errorf("cannot reallocate, data not same with prev version")
-// 	}
-// 	return nil
-// }
 
 func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 	ctx, span := trace.StartSpan(ctx, "cluster/ECRecovery")
@@ -2549,16 +2498,17 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 	dgs := NewDagGetter(ctx, c.ipfs.BlockGet, c.ipfs.FileGet)
 	wg := sync.WaitGroup{}
 	for p := range pins {
-		if p.Type == api.MetaType && p.DataShards != 0 && p.ParityShards != 0 {
+		if p.Type == api.ClusterDAGType && len(p.Metadata) > 0 {
 			wg.Add(1)
 			go func(ci api.Cid) {
 				defer wg.Done()
-				err := c.ECReConstruct(ctx, ci, dgs)
+				reconstructedPin, err := c.ECReConstruct(ctx, ci, dgs)
+				out <- reconstructedPin
 				if err != nil {
 					logger.Errorf("ReConstruct %s error:%s", ci, err)
 					return
 				}
-			}(p.Cid)
+			}(*p.Reference)
 		}
 	}
 	wg.Wait()

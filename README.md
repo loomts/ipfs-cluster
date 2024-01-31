@@ -3,38 +3,37 @@
 This project is in progress.
 
 ### Motivation
-IPFS-Cluster is a good project for data orchestration on IPFS. But it does not support erasure coding, which means that we need to use multiple memory for fault tolerance. But it can be solved by adding a [Reed-Solomon](https://github.com/klauspost/reedsolomon) layer. See [discuss](https://discuss.ipfs.tech/t/is-there-an-implementation-of-ipfs-that-includes-erasure-coding-like-reed-solomon-right-now/17052/9).
+IPFS-Cluster is a good project for data orchestration on IPFS. But it does not support erasure coding, which means that we need to use multiple memory for fault tolerance. But it can be solved by adding a [Reed-Solomon](https://github.com/klauspost/reedsolomon) module. See [discuss](https://discuss.ipfs.tech/t/is-there-an-implementation-of-ipfs-that-includes-erasure-coding-like-reed-solomon-right-now/17052/9).
 
 ### Overview
 This work can be divided into three parts.
-1. Data Addition: First is obtain data. Since data can only be accessed once, we must use `DAGService.Get` get the block data and send it to Erasure module during DAG traversal. Once Erasure module receives enough data shards, it use ReedSolomon encodes parity shards and send them to `adder`. Then adder reuses `single/dag_service` add them to IPFS as several individual files.
-2. Shard Allocation: We need to decide which nodes are suitable to each shard. The implementation ensures that large number of peers store the data shards, and more than one peer stores the parity shards. And each shard **only** will store by one peer. See `ShardAllocate` for details. After determining allocation of shards, we use the RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to pin **remotely** or locally. Therefore, I have enabled the `RPCTrusted` permission for `Cluster.Pin`.
-3. Data Recovery: We use `clusterPin` store the cid of data and parity shards as well as the size of data shards. During reconstruction, we set a timeout and attempt to retrieve data and parity shards separately. If some data shards are broken, we finally use ReedSolomon module to reconstruct and repin the file. **However, ReedSolomon has a limit**, only the sum of the number of existing data shards and party shards needs to be greater than the number of total data shards, can we reconstruct all data shards and piece together the complete data.
-
-### TODO
-The basic functions about Erasure Coding have been implemented. But still something needs to be optimized.
-
-1. Send parity shards to one peer via a single stream.
-2. Currently, we use the `sharding/dag_service` to store the original file and `single/dag_service` to store single files. More elegant way is to create a new `adder` module to combine them.
-3. Sometimes, peers store a different number of shards, when an important node (stores the largest number of shards) is down, it's difficult to meet the requirements for recovering data. We need to use a better mechanism to fit specific RS(d:p) and ensure more peers leaving the cluster.
+1. Data Addition: First is obtain data. Since data can only be accessed once, use `DAGService.Get` get the block data and send it to Erasure module during MerkleDAG traversal. Once Erasure module receives enough data shards, it use ReedSolomon encodes parity shards and send them to `adder`. Then adder reuses `single/dag_service` add them to IPFS as several individual files.
+2. Shard Allocation: We need to decide which nodes are suitable to each shard. The implementation ensures that large number of peers store the data shards, and more than one peer stores the parity shards. And each shard **only** will store by one peer when added(but allocation may change when shard broken and recovery). See `ShardAllocate` for details. After determining allocation of shards, we use the RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to pin **remotely** or locally. Therefore, I have enabled the `RPCTrusted` permission for `Cluster.Pin`.
+3. Data Recovery: We use `clusterPin` store the cid of data and parity shards as well as the size of data shards. During reconstruction, we set a timeout and attempt to retrieve data and parity shards separately. If some shards are broken, we finally use ReedSolomon module to reconstruct and repin the file. **However, ReedSolomon has a limit**, only the sum of the number of existing data shards and party shards needs to greater than total data shards, can we reconstruct all data shards and piece together the complete data.
 
 ### Usage
-- ipfs-cluster-ctl Command
+It's exactly the same as ipfs cluster. First we should start the ipfs daemon and ipfs-cluster daemon, then interacte ipfs-cluster daemon by ipfs-cluster-ctl.[see docs](https://ipfscluster.io/documentation/deployment/setup/)
 
-`add`: Added erasure coding params, build and type `ipfs-cluster-ctl add -h` for details.
-> P.S. when use --erasure, means that also enables raw-leaves and shard
+The only different is need to replace each Binary executable file.
 
-`ecget`: Get erasure file by cid, if file was broken(canot get all shards) it will automatically recovery it. 
-> P.S. Shell command can download file and directory directly. But rpc `Cluster.ECGet` can only get []byte, need to use `tar.Extractor` to extract it to FileSystem
-
-`ecrecovery`: Scan all erasure coding files pinned, if some files broken then try to recovery.
-
-- shell test script
-
-This script uses docker build 3 IPFS-Cluster peers, pin tmpfile to cluster, make peer down, and recovery tmpfile.
+You can define your environment variable like the configuration below.
 
 ```zsh
-#!/bin/zsh
+# ipfs
+alias dctl="/home/loomt/gopath/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl"
+alias dfollow="/home/loomt/gopath/src/ipfs-cluster/cmd/ipfs-cluster-follow/ipfs-cluster-follow"
+alias dservice="/home/loomt/gopath/src/ipfs-cluster/cmd/ipfs-cluster-service/ipfs-cluster-service"
+
+alias fctl="/home/loomt/gopath/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl --host /unix//home/loomt/.ipfs-cluster-follow/ali/api-socket" #Communicate with the ipfs-cluster-follow
+
+alias cctl="ipfs-cluster-ctl"
+alias cfollow="ipfs-cluster-follow"
+alias cservice="ipfs-cluster-service"
+
+export GOLOG_LOG_LEVEL="info,subsystem1=warn,subsystem2=debug" # github.com/ipfs/go-log set log level
+
+# fast start up for 3 machines docker
+alias dctlmake='
 cd $GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl && make
 cd $GOPATH/src/ipfs-cluster
 
@@ -43,42 +42,67 @@ sleep 2
 docker-compose -f docker-compose-erasure.yml up -d
 sleep 10
 
-alias dctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl"
+docker logs -f cluster0
+'
 
-# QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ is the cid of tmpfile
-ci="QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ"
-dctl pin rm $ci
+# little change may let test fail
+dctltest() {
+  cd $GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl && make
+  cd $GOPATH/src/ipfs-cluster
 
-seq 1 250000 > tmpfile
-dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure
-# dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure --data-shards 4 --parity-shards 2
-rm tmpfile
+  docker build -t ipfs-cluster-erasure -f Dockerfile-erasure .
+  sleep 2
+  docker-compose -f docker-compose-erasure.yml up -d
+  sleep 10
 
-sleep 2
+  # QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ is the cid of tmpfile
+  ci="QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ"
+  dctl pin rm $ci
 
-# find frist peer no equal cluster0 and store sharding data
-# awk '$1 == 1 && $2 != 0 {print $2}' means that find the peer that store one shard and it's id not cluster0(cluster0 expose port)
-x=$(dctl status --filter pinned | grep cluster | awk -F'cluster' '{print $2}' | awk '{print $1}' | sort | uniq -c | awk '$1 == 3 && $2 != 0 {print $2}' | head -n 1)
-docker stop "cluster$x" "ipfs$x"
+  seq 1 250000 > tmpfile
+  dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure #--erasure --data-shards 4 --parity-shards 2
+  rm tmpfile
+  sleep 2
 
-sleep 1
-dctl ipfs gc
-dctl status --filter pinned
-sleep 1
+  # find frist peer no equal cluster0 and store sharding data
+  # awk '$1 == 1 && $2 != 0 {print $2}' means that find the peer that store one shard and it's id not cluster0(cluster0 expose port)
+  x=$(dctl status --filter pinned | grep cluster | awk -F'cluster' '{print $2}' | awk '{print $1}' | sort | uniq -c | awk '$1 == 3 && $2 != {print $2}' | head -n 1)
+  docker stop "cluster$x" "ipfs$x"
 
-output=$(dctl ecrecovery | awk '{print $1}')
+  sleep 1
+  dctl ipfs gc # clean ipfs cache
+  dctl status --filter pinned
 
-if [ "$output" = "$ci" ]; then
-    echo "The strings are equal."
-else
-    echo "The strings are not equal."
-fi
+  output=$(dctl ecrecovery | awk '{print $1}')
 
-# docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
-# sudo rm -rf compose
-# docker rmi ipfs-cluster-erasure
+  if [ "$output" = "$ci" ]; then
+      echo "The strings are equal."
+  else
+      echo "The strings are not equal."
+  fi
+}
+
 ```
 
+P.S. If you notice no disk space left, use `docker system df` to check docker cache.
+
+- ipfs-cluster-ctl new command
+
+`add ... --erasure`: Added file by erasure coding, build `ipfs-cluster-ctl` and type `ipfs-cluster-ctl add -h` for details.
+> P.S. when use --erasure, means that also enables raw-leaves and shard
+
+`ecget`: Get erasure file by cid, if file was broken(canot get all shards) it will automatically recovery it. 
+> P.S. Shell command can download file and directory directly. But rpc `Cluster.ECGet` can only get []byte, need to use `tar.Extractor` to extract it to FileSystem
+
+`ecrecovery`: Scan all erasure coding files pinned, if some files broken then try to recovery.
+
+
+### TODO
+Now this project supports fundamental features about Erasure Code. But still something needs to be optimized.
+
+1. Send parity shards to one peer via a single stream.
+2. Currently, we use the `sharding/dag_service` to store the original file and `single/dag_service` to store single files. More elegant way is to create a new `adder` module to combine them.
+3. Support block level erasure.
 
 ---
 [![Made by](https://img.shields.io/badge/By-Protocol%20Labs-000000.svg?style=flat-square)](https://protocol.ai)
@@ -117,8 +141,8 @@ Please participate in the [IPFS Cluster user registry](https://docs.google.com/f
   - [Warning](#warning)
   - [Motivation](#motivation)
   - [Overview](#overview)
-  - [TODO](#todo)
   - [Usage](#usage)
+  - [TODO](#todo)
   - [Are you using IPFS Cluster?](#are-you-using-ipfs-cluster)
 - [Table of Contents](#table-of-contents)
 - [Documentation](#documentation)

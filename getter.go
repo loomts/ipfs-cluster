@@ -100,11 +100,11 @@ func (ds *dagSession) decode(ctx context.Context, rawb []byte) (format.Node, err
 }
 
 // ECGetShards get both data shards and parity shards by root cid
-func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int) ([][]byte, [][]byte, []int, []*format.Link, error) {
+func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int) ([][]byte, [][]byte, []int, error) {
 	links, errs := ds.ResolveCborLinks(ctx, ci) // get sorted data shards
 	if errs != nil {
 		logger.Error(errs)
-		return nil, nil, nil, nil, errs
+		return nil, nil, nil, errs
 	}
 	vects := make([][]byte, len(links))
 	needCh := make(chan int, len(links)) // default RS(4,2) enable 1/3 shards broken
@@ -144,7 +144,7 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int
 		needRepin = append(needRepin, i)
 	}
 	sort.Ints(needRepin)
-	return vects[:dShardNum:dShardNum], vects[dShardNum:], needRepin, links, nil
+	return vects[:dShardNum:dShardNum], vects[dShardNum:], needRepin, nil
 }
 
 // ResolveCborLinks get sorted block links
@@ -188,7 +188,7 @@ func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, idx int, 
 			return nil, fmt.Errorf("cannot resolve shard(%s): %s", sh.Cid, err)
 		}
 	} else {
-		// TODO consider how to improve
+		// TODO consider how to optimize
 		switch sh.Cid.Prefix().Codec {
 		case cid.DagProtobuf:
 			// the reason why not use uio.NewDagReader is because dag_service.Get will call context.Cancel and sometime decode failed

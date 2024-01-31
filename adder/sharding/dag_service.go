@@ -158,13 +158,12 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	clusterDAGPin.Reference = &dataRoot
 	dataShardSize := dgs.rs.GetDataShardSize()
 	// record data shard size to metadata, enable erasure module know data size and the number.
-	fmt.Println("==============")
 	for i, size := range dataShardSize {
-		fmt.Println(i, size)
+		logger.Debug(i, size)
 		clusterDAGPin.Metadata[i] = fmt.Sprintf("%d", size)
 	}
 	for _, bmeta := range dgs.blockMeta {
-		fmt.Println(bmeta)
+		logger.Debug(bmeta)
 		clusterDAGPin.Metadata[bmeta.String()] = ""
 	}
 	// Update object with response.
