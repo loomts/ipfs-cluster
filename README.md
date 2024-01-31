@@ -12,19 +12,20 @@ This work can be divided into three parts.
 3. Data Recovery: We use `clusterPin` store the cid of data and parity shards as well as the size of data shards. During reconstruction, we set a timeout and attempt to retrieve data and parity shards separately. If some shards are broken, we finally use ReedSolomon module to reconstruct and repin the file. **However, ReedSolomon has a limit**, only the sum of the number of existing data shards and party shards needs to greater than total data shards, can we reconstruct all data shards and piece together the complete data.
 
 ### Usage
-It's exactly the same as ipfs cluster. First we should start the ipfs daemon and ipfs-cluster daemon, then interacte ipfs-cluster daemon by ipfs-cluster-ctl.[see docs](https://ipfscluster.io/documentation/deployment/setup/)
+It's exactly the same as ipfs cluster. First, we need to start the IPFS daemon and the IPFS cluster daemon, and then interact with the IPFS cluster daemon through ipfs-cluster-ctl. [See documentation](https://ipfscluster.io/documentation/deployment/setup/)
 
-The only different is need to replace each Binary executable file.
+The only difference is that each binary executable needs to be replaced.
 
-You can define your environment variable like the configuration below.
+You can define your environment variables as follows:
 
 ```zsh
-# ipfs
-alias dctl="/home/loomt/gopath/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl"
-alias dfollow="/home/loomt/gopath/src/ipfs-cluster/cmd/ipfs-cluster-follow/ipfs-cluster-follow"
-alias dservice="/home/loomt/gopath/src/ipfs-cluster/cmd/ipfs-cluster-service/ipfs-cluster-service"
+# copy to ~/.bashrc || ~/.zshrc 
 
-alias fctl="/home/loomt/gopath/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl --host /unix//home/loomt/.ipfs-cluster-follow/ali/api-socket" #Communicate with the ipfs-cluster-follow
+alias dctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl"
+alias dfollow="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-follow/ipfs-cluster-follow"
+alias dservice="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-service/ipfs-cluster-service"
+
+alias fctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl --host /unix//home/loomt/.ipfs-cluster-follow/ali/api-socket" #Communicate with the ipfs-cluster-follow
 
 alias cctl="ipfs-cluster-ctl"
 alias cfollow="ipfs-cluster-follow"
@@ -32,7 +33,7 @@ alias cservice="ipfs-cluster-service"
 
 export GOLOG_LOG_LEVEL="info,subsystem1=warn,subsystem2=debug" # github.com/ipfs/go-log set log level
 
-# fast start up for 3 machines docker
+# fastly start the cluster using Docker
 alias dctlmake='
 cd $GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl && make
 cd $GOPATH/src/ipfs-cluster
@@ -76,33 +77,34 @@ dctltest() {
   output=$(dctl ecrecovery | awk '{print $1}')
 
   if [ "$output" = "$ci" ]; then
-      echo "The strings are equal."
+      echo "The strings are equal, test pass."
   else
-      echo "The strings are not equal."
+      echo "The strings are not equal, test fail."
   fi
 }
 
 ```
 
-P.S. If you notice no disk space left, use `docker system df` to check docker cache.
+P.S. If you notice no disk space left, use `docker system df` to check docker cache :)
 
 - ipfs-cluster-ctl new command
 
 `add ... --erasure`: Added file by erasure coding, build `ipfs-cluster-ctl` and type `ipfs-cluster-ctl add -h` for details.
-> P.S. when use --erasure, means that also enables raw-leaves and shard
+> P.S. Using --erasure also force enables raw-leaves and shard
 
 `ecget`: Get erasure file by cid, if file was broken(canot get all shards) it will automatically recovery it. 
-> P.S. Shell command can download file and directory directly. But rpc `Cluster.ECGet` can only get []byte, need to use `tar.Extractor` to extract it to FileSystem
+> P.S. Shell command can download file and directory directly. But rpc `Cluster.ECGet` can only retrieve []byte, so you need to use `tar.Extractor` to extract it to FileSystem.
 
-`ecrecovery`: Scan all erasure coding files pinned, if some files broken then try to recovery.
+`ecrecovery`: Scan all erasure coding files pinned, if some files broken then try to recover.
 
 
 ### TODO
-Now this project supports fundamental features about Erasure Code. But still something needs to be optimized.
+This project currently supports fundamental features about Erasure Code. However, there are areas that need optimization:
 
-1. Send parity shards to one peer via a single stream.
-2. Currently, we use the `sharding/dag_service` to store the original file and `single/dag_service` to store single files. More elegant way is to create a new `adder` module to combine them.
-3. Support block level erasure.
+
+1. Send parity shards to a single peer via one stream.
+2. At present, we use `sharding/dag_service` to store the original file and `single/dag_service` to store single files. A more elegant solution would be to create a new `adder` module to combine them.
+3. Support for block-level erasure.
 
 ---
 [![Made by](https://img.shields.io/badge/By-Protocol%20Labs-000000.svg?style=flat-square)](https://protocol.ai)
