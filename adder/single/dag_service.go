@@ -160,14 +160,15 @@ func (dgs *DAGService) Finalize(ctx context.Context, root api.Cid) (api.Cid, err
 	}
 	// Cluster pin the result
 	rootPin := api.PinWithOpts(root, dgs.addParams.PinOptions)
-	rootPin.Allocations = dgs.dests
+	rootPin.Allocations = append(rootPin.Allocations, dgs.dests...)
+	dgs.dests = nil
 	if dgs.addParams.Erasure {
 		rootPin.ReplicationFactorMax = 1
 		rootPin.ReplicationFactorMin = 1
 		// reflash blocks and blockStreamer to reuse dag_service
 		dgs.blocks = make(chan api.NodeWithMeta, 256)
 		dgs.closeBlocksOnce = sync.Once{}
-		dgs.bs = adder.NewBlockStreamer(dgs.ctx, dgs.rpcClient, []peer.ID{dgs.dests[0]}, dgs.blocks)
+		dgs.bs = adder.NewBlockStreamer(dgs.ctx, dgs.rpcClient, []peer.ID{rootPin.Allocations[0]}, dgs.blocks)
 		return root, adder.ErasurePin(ctx, dgs.rpcClient, rootPin)
 	} else {
 		return root, adder.Pin(ctx, dgs.rpcClient, rootPin)
@@ -215,7 +216,7 @@ func (dgs *DAGService) GetRS() *ec.ReedSolomon {
 }
 
 func (dgs *DAGService) SetParity(name string) {
-	idx, _ := strconv.Atoi(strings.Split(name, "-")[2]) // get parity index
+	idx, _ := strconv.Atoi(strings.Split(name, "-")[3]) // get parity index
 	dgs.addParams.Erasure = true
 	dgs.addParams.Name = name
 	dgs.parityIdx = idx
