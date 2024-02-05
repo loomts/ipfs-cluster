@@ -80,7 +80,7 @@ type Client interface {
 	Allocation(ctx context.Context, ci api.Cid) (api.Pin, error)
 
 	// ECGet download the erasure coding file of given cid
-	ECGet(ctx context.Context, ci api.Cid) error
+	ECGet(ctx context.Context, ci api.Cid, outpath string) error
 	// ECRecovery scan pinned files and try to reconstruct and repin them
 	ECRecovery(ctx context.Context, out chan<- api.Pin) error
 

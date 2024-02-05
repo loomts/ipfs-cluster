@@ -291,13 +291,22 @@ This command will download the file from peers and reconstruct it locally
 then check the integrity of the file and return.
 P.S. You can use ipfs get instead of ipfs-cluster-ctl ecget if you do not use Erasure Coding.
 `,
-			Flags: []cli.Flag{},
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "outpath,o",
+					Usage: "The path where the file will be saved. If not specified, the file will be saved in the current directory",
+				},
+			},
 			Action: func(c *cli.Context) error {
 				cidStr := c.Args().First()
 				if cidStr != "" {
 					ci, err := api.DecodeCid(cidStr)
 					checkErr("parsing cid", err)
-					err = globalClient.ECGet(ctx, ci)
+					outpath := c.String("outpath")
+					if outpath == "" {
+						outpath, _ = os.Getwd()
+					}
+					err = globalClient.ECGet(ctx, ci, outpath)
 					checkErr("ecget", err)
 				} else {
 					checkErr("", errors.New("need a cid"))

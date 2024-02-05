@@ -705,7 +705,7 @@ func (c *defaultClient) Health(ctx context.Context) error {
 	return err
 }
 
-func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid) error {
+func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid, outpath string) error {
 	ctx, span := trace.StartSpan(ctx, "client/ECGet")
 	defer span.End()
 
@@ -722,8 +722,8 @@ func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid) error {
 	if err != nil {
 		return err
 	}
-	p, _ := os.Getwd()
-	extractor := &tar.Extractor{Path: path.Join(p, ci.String())}
+
+	extractor := &tar.Extractor{Path: path.Join(outpath, ci.String())}
 	return extractor.Extract(bytes.NewReader(b))
 }
 

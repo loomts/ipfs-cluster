@@ -39,6 +39,7 @@ type shard struct {
 type ECBlockMeta struct {
 	ShardNo int
 	BlockNo int
+	Offset  uint64
 	Size    uint64
 	Cid     string
 }

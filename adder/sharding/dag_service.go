@@ -256,6 +256,7 @@ func (dgs *DAGService) ingestBlock(ctx context.Context, n ipld.Node) error {
 			meta := ECBlockMeta{
 				ShardNo: len(dgs.shards),
 				BlockNo: len(shard.blockMeta),
+				Offset:  shard.Size(),
 				Size:    size,
 				Cid:     nb.Cid().String(),
 			}
