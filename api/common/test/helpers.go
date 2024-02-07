@@ -139,7 +139,7 @@ func HTTPURL(a API) string {
 
 // P2pURL returns the libp2p endpoint of the API.
 func P2pURL(a API) string {
-	return fmt.Sprintf("libp2p://%s", a.Host().ID().String())
+	return fmt.Sprintf("libp2p://%s", a.Host().ID())
 }
 
 // HttpsURL returns the HTTPS endpoint of the API

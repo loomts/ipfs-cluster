@@ -966,7 +966,7 @@ func TestProxyDagPut(t *testing.T) {
 
 func proxyURL(c *Server) string {
 	addr := c.listeners[0].Addr()
-	return fmt.Sprintf("http://%s/api/v0", addr.String())
+	return fmt.Sprintf("http://%s/api/v0", addr)
 }
 
 func TestIPFSProxy(t *testing.T) {

@@ -1045,7 +1045,7 @@ type Pin struct {
 // String is a string representation of a Pin.
 func (pin Pin) String() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "cid: %s\n", pin.Cid.String())
+	fmt.Fprintf(&b, "cid: %s\n", pin.Cid)
 	fmt.Fprintf(&b, "type: %s\n", pin.Type)
 	fmt.Fprintf(&b, "allocations: %v\n", pin.Allocations)
 	fmt.Fprintf(&b, "maxdepth: %d\n", pin.MaxDepth)

@@ -127,7 +127,7 @@ func textFormatObject(resp interface{}) {
 
 func textFormatPrintID(obj api.ID) {
 	if obj.Error != "" {
-		fmt.Printf("%s | ERROR: %s\n", obj.ID.String(), obj.Error)
+		fmt.Printf("%s | ERROR: %s\n", obj.ID, obj.Error)
 		return
 	}
 

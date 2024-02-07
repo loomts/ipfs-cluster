@@ -1315,11 +1315,11 @@ func TestClustersReplicationOverall(t *testing.T) {
 			}
 		}
 		if numLocal != nClusters-1 {
-			t.Errorf("%s: Expected %d local pins but got %d", c.id.String(), nClusters-1, numLocal)
+			t.Errorf("%s: Expected %d local pins but got %d", c.id, nClusters-1, numLocal)
 		}
 
 		if numRemote != 1 {
-			t.Errorf("%s: Expected 1 remote pin but got %d", c.id.String(), numRemote)
+			t.Errorf("%s: Expected 1 remote pin but got %d", c.id, numRemote)
 		}
 
 		outPins := make(chan api.Pin)
@@ -1748,7 +1748,7 @@ func TestClustersReplicationRealloc(t *testing.T) {
 	for i, c := range clusters {
 		pinfo := c.tracker.Status(ctx, h)
 		if pinfo.Status == api.TrackerStatusPinned {
-			//t.Logf("Killing %s", c.id.String())
+			//t.Logf("Killing %s", c.id)
 			killedClusterIndex = i
 			t.Logf("Shutting down %s", c.ID(ctx).ID)
 			c.Shutdown(ctx)

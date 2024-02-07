@@ -122,7 +122,7 @@ func TestAPIPeerAddEndpoint(t *testing.T) {
 	tf := func(t *testing.T, url test.URLFunc) {
 		id := api.ID{}
 		// post with valid body
-		body := fmt.Sprintf("{\"peer_id\":\"%s\"}", clustertest.PeerID1.String())
+		body := fmt.Sprintf("{\"peer_id\":\"%s\"}", clustertest.PeerID1)
 		t.Log(body)
 		test.MakePost(t, rest, url(rest)+"/peers", []byte(body), &id)
 		if id.ID.String() != clustertest.PeerID1.String() {

@@ -467,7 +467,7 @@ func (api *API) runLibp2pServer(ctx context.Context) {
 
 	listenMsg := ""
 	for _, a := range api.host.Addrs() {
-		listenMsg += fmt.Sprintf("        %s/p2p/%s\n", a, api.host.ID().String())
+		listenMsg += fmt.Sprintf("        %s/p2p/%s\n", a, api.host.ID())
 	}
 
 	api.config.Logger.Infof(strings.ToUpper(api.config.ConfigKey)+" (libp2p-http): ENABLED. Listening on:\n%s\n", listenMsg)

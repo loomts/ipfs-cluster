@@ -718,7 +718,7 @@ func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid, outpath string) e
 		return nil
 	}
 
-	err := c.doStream(ctx, "GET", fmt.Sprintf("/ecget/%s", ci.String()), nil, nil, handler)
+	err := c.doStream(ctx, "GET", fmt.Sprintf("/ecget/%s", ci), nil, nil, handler)
 	if err != nil {
 		return err
 	}
