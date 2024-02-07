@@ -2309,6 +2309,40 @@ func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) ([]byte, error) {
 	return dgs.GetArchivedFile(ctx, pin.Cid.Cid, pin.Name)
 }
 
+func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
+	ctx, span := trace.StartSpan(ctx, "cluster/ECRecovery")
+	defer span.End()
+	defer close(out)
+	cState, err := c.consensus.State(ctx)
+	if err != nil {
+		logger.Error(err)
+		return err
+	}
+	pins := make(chan api.Pin, 1024)
+	err = cState.List(ctx, pins)
+	if err != nil {
+		logger.Errorf("cannot list pins: %s", err)
+	}
+	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
+	wg := sync.WaitGroup{}
+	for p := range pins {
+		if p.Type == api.ClusterDAGType && len(p.Metadata) > 0 {
+			wg.Add(1)
+			go func(ci api.Cid) {
+				defer wg.Done()
+				pin, err := c.ECReConstruct(ctx, ci, dgs)
+				out <- pin
+				if err != nil {
+					logger.Errorf("ReConstruct %s error:%s", ci, err)
+					return
+				}
+			}(*p.Reference)
+		}
+	}
+	wg.Wait()
+	return nil
+}
+
 func ECExtraMetaData(metadata map[string]string) (map[int][]sharding.ECBlockMeta, []int, error) {
 	// dShardSize used to confirm the original size of dataShards (sometime erasure will append zero to dataShards)
 	dShardSize := make(map[int]int)
@@ -2514,38 +2548,4 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 		errs = append(errs, err)
 	}
 	return multierr.Combine(errs...)
-}
-
-func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
-	ctx, span := trace.StartSpan(ctx, "cluster/ECRecovery")
-	defer span.End()
-	defer close(out)
-	cState, err := c.consensus.State(ctx)
-	if err != nil {
-		logger.Error(err)
-		return err
-	}
-	pins := make(chan api.Pin, 1024)
-	err = cState.List(ctx, pins)
-	if err != nil {
-		logger.Errorf("cannot list pins: %s", err)
-	}
-	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
-	wg := sync.WaitGroup{}
-	for p := range pins {
-		if p.Type == api.ClusterDAGType && len(p.Metadata) > 0 {
-			wg.Add(1)
-			go func(ci api.Cid) {
-				defer wg.Done()
-				pin, err := c.ECReConstruct(ctx, ci, dgs)
-				out <- pin
-				if err != nil {
-					logger.Errorf("ReConstruct %s error:%s", ci, err)
-					return
-				}
-			}(*p.Reference)
-		}
-	}
-	wg.Wait()
-	return nil
 }
