@@ -36,11 +36,12 @@ type DAGService struct {
 	addParams api.AddParams
 	local     bool
 
-	bs              *adder.BlockStreamer
-	blocks          chan api.NodeWithMeta
-	closeBlocksOnce sync.Once
-	recentBlocks    *recentBlocks
-	parityIdx       int // parity index, only used when enable erasure coding
+	bs           *adder.BlockStreamer
+	recentBlocks *recentBlocks
+	// erasure need to add serveral parity shards
+	blocks          []chan api.NodeWithMeta
+	closeBlocksOnce []sync.Once
+	fileIdx         int // parity shard index, only used when enable erasure code
 }
 
 // New returns a new Adder with the given rpc Client. The client is used
@@ -49,13 +50,14 @@ func New(ctx context.Context, rpc *rpc.Client, opts api.AddParams, local bool) *
 	// ensure don't Add something and pin it in direct mode.
 	opts.Mode = api.PinModeRecursive
 	return &DAGService{
-		ctx:          ctx,
-		rpcClient:    rpc,
-		dests:        nil,
-		addParams:    opts,
-		local:        local,
-		blocks:       make(chan api.NodeWithMeta, 256),
-		recentBlocks: &recentBlocks{},
+		ctx:             ctx,
+		rpcClient:       rpc,
+		dests:           nil,
+		addParams:       opts,
+		local:           local,
+		blocks:          make([]chan api.NodeWithMeta, 0),
+		closeBlocksOnce: make([]sync.Once, 0),
+		recentBlocks:    &recentBlocks{},
 	}
 }
 
@@ -88,16 +90,17 @@ func (dgs *DAGService) Add(ctx context.Context, node ipld.Node) error {
 			}
 		}
 
+		dgs.blocks = append(dgs.blocks, make(chan api.NodeWithMeta, 256))
+		dgs.closeBlocksOnce = append(dgs.closeBlocksOnce, sync.Once{})
 		if dgs.addParams.Erasure {
 			// this sets allocations as single peer
-			allocation, err := adder.DefaultECAllocate(dests, dgs.addParams.DataShards, dgs.addParams.ParityShards, dgs.parityIdx, false)
+			allocation, err := adder.DefaultECAllocate(dests, dgs.addParams.DataShards, dgs.addParams.ParityShards, dgs.fileIdx, false)
 			if err != nil {
-				return fmt.Errorf("parity shard allocation %d: %s", dgs.parityIdx, err)
+				return fmt.Errorf("parity shard allocation %d: %s", dgs.fileIdx, err)
 			}
 			dests = []peer.ID{allocation}
 		}
 		dgs.dests = dests
-
 		if dgs.local {
 			// If this is a local pin, make sure that the local
 			// peer is among the allocations..
@@ -107,18 +110,17 @@ func (dgs *DAGService) Add(ctx context.Context, node ipld.Node) error {
 				dgs.dests[len(dgs.dests)-1] = localPid
 			}
 
-			dgs.bs = adder.NewBlockStreamer(dgs.ctx, dgs.rpcClient, []peer.ID{localPid}, dgs.blocks)
+			dgs.bs = adder.NewBlockStreamer(dgs.ctx, dgs.rpcClient, []peer.ID{localPid}, dgs.blocks[dgs.fileIdx])
 		} else {
-			dgs.bs = adder.NewBlockStreamer(dgs.ctx, dgs.rpcClient, dgs.dests, dgs.blocks)
+			dgs.bs = adder.NewBlockStreamer(dgs.ctx, dgs.rpcClient, dgs.dests, dgs.blocks[dgs.fileIdx])
 		}
 	}
-
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-dgs.ctx.Done():
 		return ctx.Err()
-	case dgs.blocks <- adder.IpldNodeToNodeWithMeta(node):
+	case dgs.blocks[dgs.fileIdx] <- adder.IpldNodeToNodeWithMeta(node):
 		dgs.recentBlocks.Add(node)
 		return nil
 	}
@@ -126,17 +128,25 @@ func (dgs *DAGService) Add(ctx context.Context, node ipld.Node) error {
 
 // Close cleans up the DAGService.
 func (dgs *DAGService) Close() error {
-	dgs.closeBlocksOnce.Do(func() {
-		close(dgs.blocks)
-	})
+	for i := range dgs.closeBlocksOnce {
+		dgs.closeBlocksOnce[i].Do(func() {
+			close(dgs.blocks[i])
+		})
+	}
 	return nil
+}
+
+// Close i blockstream.
+func (dgs *DAGService) CloseI(i int) {
+	dgs.closeBlocksOnce[i].Do(func() {
+		close(dgs.blocks[i])
+	})
 }
 
 // Finalize pins the last Cid added to this DAGService.
 func (dgs *DAGService) Finalize(ctx context.Context, root api.Cid) (api.Cid, error) {
-	// Close the blocks channel
-	dgs.Close()
-
+	// Close current blocks channel
+	dgs.CloseI(dgs.fileIdx)
 	// Wait for the BlockStreamer to finish.
 	select {
 	case <-dgs.ctx.Done():
@@ -165,10 +175,6 @@ func (dgs *DAGService) Finalize(ctx context.Context, root api.Cid) (api.Cid, err
 	if dgs.addParams.Erasure {
 		rootPin.ReplicationFactorMax = 1
 		rootPin.ReplicationFactorMin = 1
-		// reflash blocks and blockStreamer to reuse dag_service
-		dgs.blocks = make(chan api.NodeWithMeta, 256)
-		dgs.closeBlocksOnce = sync.Once{}
-		dgs.bs = adder.NewBlockStreamer(dgs.ctx, dgs.rpcClient, []peer.ID{rootPin.Allocations[0]}, dgs.blocks)
 		return root, adder.ErasurePin(ctx, dgs.rpcClient, rootPin)
 	} else {
 		return root, adder.Pin(ctx, dgs.rpcClient, rootPin)
@@ -216,10 +222,11 @@ func (dgs *DAGService) GetRS() *ec.ReedSolomon {
 }
 
 func (dgs *DAGService) SetParity(name string) {
-	idx, _ := strconv.Atoi(strings.Split(name, "-")[3]) // get parity index
+	nameSplit := strings.Split(name, "-")
+	idx, _ := strconv.Atoi(nameSplit[len(nameSplit)-1]) // get parity index
 	dgs.addParams.Erasure = true
 	dgs.addParams.Name = name
-	dgs.parityIdx = idx
+	dgs.fileIdx = idx
 }
 
 func (dgs *DAGService) FlushCurrentShard(ctx context.Context) (cid api.Cid, err error) {

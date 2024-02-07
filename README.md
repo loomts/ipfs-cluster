@@ -16,7 +16,7 @@ It's exactly the same as ipfs cluster. First, we need to start the IPFS daemon a
 
 The only difference is that each binary executable needs to be replaced.
 
-You can define your environment variables as follows:
+#### scripts
 
 ```zsh
 # copy to ~/.bashrc || ~/.zshrc 
@@ -25,7 +25,7 @@ alias dctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl"
 alias dfollow="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-follow/ipfs-cluster-follow"
 alias dservice="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-service/ipfs-cluster-service"
 
-alias fctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl --host /unix//home/loomt/.ipfs-cluster-follow/ali/api-socket" #Communicate with the ipfs-cluster-follow
+alias fctl="$GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl/ipfs-cluster-ctl --host /unix/$HOME/.ipfs-cluster-follow/ali/api-socket" #Communicate with the ipfs-cluster-follow
 
 alias cctl="ipfs-cluster-ctl"
 alias cfollow="ipfs-cluster-follow"
@@ -39,9 +39,7 @@ cd $GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl && make
 cd $GOPATH/src/ipfs-cluster
 
 docker build -t ipfs-cluster-erasure -f Dockerfile-erasure .
-sleep 2
 docker-compose -f docker-compose-erasure.yml up -d
-sleep 10
 
 docker logs -f cluster0
 '
@@ -52,9 +50,7 @@ dctltest() {
   cd $GOPATH/src/ipfs-cluster
 
   docker build -t ipfs-cluster-erasure -f Dockerfile-erasure .
-  sleep 2
   docker-compose -f docker-compose-erasure.yml up -d
-  sleep 10
 
   # QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ is the cid of tmpfile
   ci="QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ"
@@ -63,14 +59,12 @@ dctltest() {
   seq 1 250000 > tmpfile
   dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure #--erasure --data-shards 4 --parity-shards 2
   rm tmpfile
-  sleep 2
 
   # find frist peer no equal cluster0 and store sharding data
   # awk '$1 == 1 && $2 != 0 {print $2}' means that find the peer that store one shard and it's id not cluster0(cluster0 expose port)
   x=$(dctl status --filter pinned | grep cluster | awk -F'cluster' '{print $2}' | awk '{print $1}' | sort | uniq -c | awk '$1 == 3 && $2 != {print $2}' | head -n 1)
   docker stop "cluster$x" "ipfs$x"
 
-  sleep 1
   dctl ipfs gc # clean ipfs cache
   dctl status --filter pinned
 
@@ -87,7 +81,7 @@ dctltest() {
 
 P.S. If you notice no disk space left, use `docker system df` to check docker cache :)
 
-- ipfs-cluster-ctl new command
+#### ipfs-cluster-ctl new command
 
 `add ... --erasure`: Added file by erasure coding, build `ipfs-cluster-ctl` and type `ipfs-cluster-ctl add -h` for details.
 > P.S. Using --erasure also force enables raw-leaves and shard
@@ -99,12 +93,11 @@ P.S. If you notice no disk space left, use `docker system df` to check docker ca
 
 
 ### TODO
-This project currently supports fundamental features about Erasure Code. However, there are areas that need optimization:
+This project currently supports fundamental features about Erasure Code. However, there are something need to be optimizated:
 
-
-1. Send parity shards to a single peer via one stream.
-2. At present, we use `sharding/dag_service` to store the original file and `single/dag_service` to store single files. A more elegant solution would be to create a new `adder` module to combine them.
-3. Support for block-level erasure.
+1. At present, we use `sharding/dag_service` to store the original file and `single/dag_service` to store single files. A more elegant solution would be to create a new `adder` module to combine them.
+2. Support for block-level erasure. ~~set shard size=defaultBlockSize is block-level erasure~~
+3. When using `single/dag_service` to add parity shards as individual files, make `api.NodeWithMeta` and `sync.Once` as a slice is simple but stupid solution to prevent multiple invocations of Finalize. Each parity shard uses a unique `api.NodeWithMeta` and `sync.Once`, avoiding conflicts. However, this approach disrupts the original structure of `single/dag_service`, it return TODO1.
 
 ---
 [![Made by](https://img.shields.io/badge/By-Protocol%20Labs-000000.svg?style=flat-square)](https://protocol.ai)
@@ -144,6 +137,8 @@ Please participate in the [IPFS Cluster user registry](https://docs.google.com/f
   - [Motivation](#motivation)
   - [Overview](#overview)
   - [Usage](#usage)
+    - [scripts](#scripts)
+    - [ipfs-cluster-ctl new command](#ipfs-cluster-ctl-new-command)
   - [TODO](#todo)
   - [Are you using IPFS Cluster?](#are-you-using-ipfs-cluster)
 - [Table of Contents](#table-of-contents)

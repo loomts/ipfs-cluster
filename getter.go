@@ -50,15 +50,13 @@ type dagSession struct {
 	dataShards [][]byte
 	bmeta      map[string]sharding.ECBlockMeta
 	blockGet   func(ctx context.Context, ci api.Cid) ([]byte, error)
-	fileGet    func(ctx context.Context, fpath string) ([]byte, error)
 }
 
-func NewDagGetter(ctx context.Context, bg func(ctx context.Context, ci api.Cid) ([]byte, error), fg func(ctx context.Context, fpath string) ([]byte, error)) *dagSession {
+func NewDagGetter(ctx context.Context, bg func(ctx context.Context, ci api.Cid) ([]byte, error)) *dagSession {
 	return &dagSession{
 		bmeta:    make(map[string]sharding.ECBlockMeta),
 		ctx:      ctx,
 		blockGet: bg,
-		fileGet:  fg,
 	}
 }
 
@@ -110,27 +108,28 @@ func (ds *dagSession) Get(ctx context.Context, ci cid.Cid) (format.Node, error) 
 
 func (ds *dagSession) GetMany(ctx context.Context, keys []cid.Cid) <-chan *format.NodeOption {
 	out := make(chan *format.NodeOption, len(keys))
-	var count int
 
 	go func() {
 		defer close(out)
+		wg := sync.WaitGroup{}
+		wg.Add(len(keys))
 		for _, ci := range keys {
-			nd, err := ds.Get(ctx, ci)
-			if err != nil {
-				out <- &format.NodeOption{Err: fmt.Errorf("cannot get all blocks: %s", err)}
-			}
-			no := &format.NodeOption{Node: nd, Err: err}
-			select {
-			case out <- no:
-				count++
-				if count == len(keys) {
+			go func(ci cid.Cid) {
+				defer wg.Done()
+				nd, err := ds.Get(ctx, ci)
+				if err != nil {
+					out <- &format.NodeOption{Err: fmt.Errorf("cannot get all blocks: %s", err)}
+				}
+				no := &format.NodeOption{Node: nd, Err: err}
+				select {
+				case out <- no:
+				case <-ctx.Done():
+					out <- &format.NodeOption{Err: fmt.Errorf("GetMany context timeout: %s", err)}
 					return
 				}
-			case <-ctx.Done():
-				out <- &format.NodeOption{Err: fmt.Errorf("GetMany context timeout: %s", err)}
-				return
-			}
+			}(ci)
 		}
+		wg.Wait()
 	}()
 
 	return out
@@ -141,7 +140,7 @@ func (ds *dagSession) decode(ctx context.Context, rawb []byte, ci cid.Cid) (form
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse raw data with cid")
 	}
-	nd, err := ipldDecoder.DecodeNode(ctx, b) // TODO figure out why sharding block cannot decode: (PBNode) invalid wireType, expected 2, got ?
+	nd, err := ipldDecoder.DecodeNode(ctx, b)
 	if err != nil {
 		logger.Warnf("Failed to decode block: %s", err)
 		return nil, err

@@ -2301,7 +2301,7 @@ func (c *Cluster) RepoGCLocal(ctx context.Context) (api.RepoGC, error) {
 func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) ([]byte, error) {
 	ctx, span := trace.StartSpan(ctx, "cluster/ECGet")
 	defer span.End()
-	dgs := NewDagGetter(ctx, c.ipfs.BlockGet, c.ipfs.FileGet)
+	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
 	pin, err := c.ECReConstruct(ctx, ci, dgs)
 	if err != nil {
 		return nil, fmt.Errorf("error reconstructing file: %s", err)
@@ -2453,7 +2453,7 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 		// repin blocks of raw shard to ipfs directly
 		go func(shard []byte, bmeta []sharding.ECBlockMeta) {
 			defer wg.Done()
-			// see adder/sharding/shard.go Flush, dagNode is metadata pin of shard
+			// see adder/sharding/shard.go Flush(), dagNode is metadata pin of shard
 			dagNode := make(map[string]cid.Cid)
 
 			// split rawdata to blocks and record metadata of shard
@@ -2468,8 +2468,6 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 				newCi, err := ci.Prefix().Sum(raw)
 				if newCi != ci {
 					logger.Errorf("ECPutShards error, new block's cid(%s) not equal to prev(%s)", newCi, ci)
-				} else {
-					logger.Infof("ECPutShards reput block %s", newCi)
 				}
 				blockCh <- api.NodeWithMeta{
 					Cid:     api.NewCid(ci),
@@ -2532,15 +2530,15 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 	if err != nil {
 		logger.Errorf("cannot list pins: %s", err)
 	}
-	dgs := NewDagGetter(ctx, c.ipfs.BlockGet, c.ipfs.FileGet)
+	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
 	wg := sync.WaitGroup{}
 	for p := range pins {
 		if p.Type == api.ClusterDAGType && len(p.Metadata) > 0 {
 			wg.Add(1)
 			go func(ci api.Cid) {
 				defer wg.Done()
-				reconstructedPin, err := c.ECReConstruct(ctx, ci, dgs)
-				out <- reconstructedPin
+				pin, err := c.ECReConstruct(ctx, ci, dgs)
+				out <- pin
 				if err != nil {
 					logger.Errorf("ReConstruct %s error:%s", ci, err)
 					return

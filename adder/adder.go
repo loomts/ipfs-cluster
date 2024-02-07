@@ -180,7 +180,7 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 			}
 			for {
 				parity := <-a.dgs.GetRS().GetParity()
-				logger.Infof("receive parity: %s", parity.Name)
+				logger.Infof("receive parity: %s size: %d", parity.Name, len(parity.RawData))
 				if parity.Name == "" { // channel closed
 					return
 				}
@@ -246,7 +246,7 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 	if it.Err() != nil {
 		return api.CidUndef, it.Err()
 	}
-	if a.params.Erasure {
+	if a.params.Shard {
 		lastCid, err := a.dgs.FlushCurrentShard(ctx)
 		if err != nil {
 			return lastCid, err
@@ -255,7 +255,6 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 			a.dgs.GetRS().SendBlockTo() <- ec.StatBlock{Stat: ec.FileEndBlock}
 		}
 		if !lastCid.Equals(adderRoot) {
-			// TODO: sometime it's not the same, check why
 			logger.Warnf("the last added CID (%s) is not the IPFS data root (%s). This is only normal when adding a single file without wrapping in directory.", lastCid, adderRoot)
 		}
 	}

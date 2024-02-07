@@ -104,8 +104,6 @@ type IPFSConnector interface {
 	BlockStream(context.Context, <-chan api.NodeWithMeta) error
 	// BlockGet retrieves the raw data of an IPFS block.
 	BlockGet(context.Context, api.Cid) ([]byte, error)
-	// FileGet get files from IPFS.
-	FileGet(ctx context.Context, fpath string) ([]byte, error)
 }
 
 // Peered represents a component which needs to be aware of the peers

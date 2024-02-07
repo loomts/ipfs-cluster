@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -519,16 +520,8 @@ automatically generated.
 			},
 			Action: func(c *cli.Context) error {
 				shard := c.Bool("shard")
+				erasure := c.Bool("erasure")
 				name := c.String("name")
-				if shard && name == "" {
-					randName, err := uuid.NewRandom()
-					if err != nil {
-						return err
-					}
-					// take only first letters
-					name = "sharded-" + strings.Split(randName.String(), "-")[0]
-				}
-
 				// Read arguments (paths)
 				paths := make([]string, c.NArg())
 				for i, path := range c.Args() {
@@ -537,6 +530,20 @@ automatically generated.
 
 				if len(paths) == 0 {
 					checkErr("", errors.New("need at least one path"))
+				}
+
+				if (shard || erasure) && name == "" {
+					if len(paths) == 1 {
+						// only one input file and no special name, use the last path element as filename
+						name = path.Base(paths[0])
+					} else {
+						randName, err := uuid.NewRandom()
+						if err != nil {
+							return err
+						}
+						// take only first letters
+						name = "sharded-" + strings.Split(randName.String(), "-")[0]
+					}
 				}
 
 				// Setup AddParams
@@ -556,7 +563,7 @@ automatically generated.
 				}
 				p.NoPin = c.Bool("no-pin")
 				p.Format = c.String("format")
-				p.Erasure = c.Bool("erasure")
+				p.Erasure = erasure
 				p.Shard = shard || p.Erasure
 				p.DataShards = c.Int("data-shards")
 				p.ParityShards = c.Int("parity-shards")
