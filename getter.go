@@ -78,7 +78,23 @@ func (ds *dagSession) GetRawFile(ctx context.Context, ci cid.Cid) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	return io.ReadAll(r)
+	blockSize := 256 * 1024
+	b := make([]byte, 0, blockSize)
+	for {
+		n, err := r.Read(b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return b, err
+		}
+
+		if len(b) == cap(b) {
+			// Add more capacity (let append pick how much).
+			b = append(b, 0)[:len(b)]
+		}
+	}
 }
 
 func (ds *dagSession) GetArchivedFile(ctx context.Context, ci cid.Cid, name string) ([]byte, error) {
@@ -90,6 +106,7 @@ func (ds *dagSession) GetArchivedFile(ctx context.Context, ci cid.Cid, name stri
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("new file successfully")
 	return fileArchive(f, name)
 }
 
@@ -142,7 +159,7 @@ func (ds *dagSession) decode(ctx context.Context, rawb []byte, ci cid.Cid) (form
 	}
 	nd, err := ipldDecoder.DecodeNode(ctx, b)
 	if err != nil {
-		logger.Warnf("Failed to decode block: %s", err)
+		logger.Errorf("Failed to decode block: %s", err)
 		return nil, err
 	}
 	return nd, err
@@ -166,21 +183,27 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int
 			resultCh := make(chan []byte)
 			errCh := make(chan error)
 			go func() {
+				start := time.Now()
 				vect, err := ds.ECLink2Raw(ctx, sh, i, dShardNum)
 				if err != nil {
 					errCh <- err
 					return
 				}
+				fetchTime := time.Since(start)
+				shardType := "parity"
+				if i < dShardNum {
+					shardType = "data"
+				}
+				logger.Infof("use %s fetch %dth shard(%v) successfully, size:%d shard(%s)", fetchTime, i, shardType, len(vect), sh.Cid)
 				resultCh <- vect
 			}()
 			select {
 			case vects[i] = <-resultCh:
-				logger.Infof("get %dth shard successfully, len:%d", i, len(vects[i]))
 				return
 			case err := <-errCh:
 				needCh <- i
 				logger.Errorf("cannot get %dth shard: %s", i, err)
-			case <-time.After(time.Minute):
+			case <-time.After(5 * time.Minute):
 				needCh <- i
 				logger.Errorf("cannot get %dth shard: timeout 1min", i)
 			}
@@ -224,30 +247,33 @@ func (ds *dagSession) ResolveCborLinks(ctx context.Context, shard api.Cid) ([]*f
 }
 
 // convert shard to []byte
-func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, idx int, dShards int) ([]byte, error) {
-	if idx < dShards {
+func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, idx int, dShardNum int) ([]byte, error) {
+	if idx < dShardNum {
 		links, err := ds.ResolveCborLinks(ctx, api.NewCid(sh.Cid)) // get sorted data shards
 		if err != nil {
 			return nil, fmt.Errorf("cannot resolve shard(%s): %s", sh.Cid, err)
 		}
-		return ds.ResolveRoot(ctx, links, idx)
+		vect := make([][]byte, len(links)) // estimate size
+		wg := sync.WaitGroup{}
+		wg.Add(len(links))
+		for i, link := range links {
+			go func(i int, ci api.Cid) {
+				defer wg.Done()
+				vect[i], err = ds.blockGet(ctx, ci)
+				if err != nil {
+					fmt.Printf("cannot fetch block(%s): %s\n", ci, err)
+				}
+			}(i, api.NewCid(link.Cid))
+		}
+		wg.Wait()
+		b := make([]byte, 0, len(vect)*len(vect[0]))
+		for _, v := range vect {
+			b = append(b, v...)
+		}
+		return b, nil
 	}
 	// directly get parity shard
 	return ds.GetRawFile(ctx, sh.Cid)
-}
-
-func (ds *dagSession) ResolveRoot(ctx context.Context, links []*format.Link, idx int) ([]byte, error) {
-	vect := make([]byte, 0, len(links)*256*1024) // estimate size
-	for _, link := range links {
-		b, err := ds.blockGet(ctx, api.NewCid(link.Cid))
-
-		// fmt.Printf("shard%d link:%s size:%d, prefix:%v\n", idx, link.Cid, len(b), link.Cid.Prefix())
-		if err != nil {
-			return nil, fmt.Errorf("cannot fetch block(%s): %s", link.Cid, err)
-		}
-		vect = append(vect, b...)
-	}
-	return vect, nil
 }
 
 func (ds *dagSession) Add(ctx context.Context, node format.Node) error {

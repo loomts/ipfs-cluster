@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -965,6 +966,11 @@ for a single item.  Metadata CIDs are included in the status response.
 When the --local flag is passed, it will only fetch the status from the
 contacted cluster peer. By default, status will be fetched from all peers.
 
+When the --sort flag is passed, it will sort the infomation by given feild.
+The following are valid sort feild:
+- name
+- pinned-peer
+
 When the --filter flag is passed, it will only fetch the peer information
 where status of the pin matches at least one of the filter values (a comma
 separated list). The following are valid status values:
@@ -976,6 +982,10 @@ separated list). The following are valid status values:
 				cli.StringFlag{
 					Name:  "filter",
 					Usage: "comma-separated list of filters",
+				},
+				cli.StringFlag{
+					Name:  "sort",
+					Usage: "sort the pin status by name or peer",
 				},
 			},
 			Action: func(c *cli.Context) error {
@@ -1008,6 +1018,38 @@ separated list). The following are valid status values:
 					}
 				}()
 
+				sortFlag := c.String("sort")
+				if sortFlag != "" {
+					var results []api.GlobalPinInfo
+					for res := range out {
+						results = append(results, res)
+					} // Sort the results
+					switch sortFlag {
+					case "name":
+						sort.Slice(results, func(i, j int) bool {
+							return results[i].Name < results[j].Name
+						})
+					case "pinned-peer":
+						sort.Slice(results, func(i, j int) bool {
+							pi, pj := "", ""
+							for pid := range results[i].PeerMap {
+								pi = pid
+								break
+							}
+							for pid := range results[j].PeerMap {
+								pj = pid
+								break
+							}
+							return pi < pj
+						})
+					}
+					sortOut := make(chan api.GlobalPinInfo, len(results))
+					for _, res := range results {
+						sortOut <- res
+					}
+					close(sortOut)
+					formatResponse(c, sortOut, nil)
+				}
 				formatResponse(c, out, nil)
 				err := <-chErr
 				formatResponse(c, nil, err)

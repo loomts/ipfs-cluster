@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+	"go.uber.org/multierr"
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	dag "github.com/ipfs/boxo/ipld/merkledag"
@@ -233,7 +234,7 @@ func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dS
 	if len(parityVects)%p != 0 {
 		return errors.New("parity vects length must be multiple of erasure coding parityShards")
 	}
-	var err error
+	errCh := make(chan error, len(parityVects)/p) // have len(parityVects) % p == 0
 	wg := sync.WaitGroup{}
 	wg.Add(len(parityVects) / p)
 	for i := 0; i < len(parityVects)/p; i++ {
@@ -243,7 +244,7 @@ func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dS
 			defer wg.Done()
 			shardSize, err := r.getShardSizeAndCheck(dVects, pVects)
 			if err != nil {
-				log.Errorf("reconstruct error:%v", err)
+				errCh <- fmt.Errorf("reconstruct error:%v", err)
 				return
 			}
 			// create new slices, avoid disrupting the original array
@@ -264,16 +265,15 @@ func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dS
 			for j := range vects {
 				if len(vects[j]) == 0 || vects[j] == nil {
 					if j < d {
-						fmt.Printf("dataShard %d is nil\n", i*d+j)
+						log.Infof("dataShard %d is nil\n", i*d+j)
 					} else {
-						fmt.Printf("parityShard %d is nil\n", i*p+j-d)
+						log.Infof("parityShard %d is nil\n", i*p+j-d)
 					}
 				}
 			}
-			er := r.rs.Reconstruct(vects)
-			if er != nil {
-				err = errors.Wrap(err, er.Error())
-				log.Errorf("reconstruct shards[%d~%d] error:%v", i*d, min((i+1)*d, len(dataVects)), err)
+			err = r.rs.Reconstruct(vects)
+			if err != nil {
+				errCh <- fmt.Errorf("reconstruct shards[%d~%d] error:%v", i*d, min((i+1)*d, len(dataVects)), err)
 				return
 			}
 			// remove diff
@@ -286,7 +286,12 @@ func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dS
 		}(dataVects[i*d:min((i+1)*d, len(dataVects))], parityVects[i*p:(i+1)*p], dShardSize[i*d:min((i+1)*d, len(dataVects))])
 	}
 	wg.Wait()
-	return err
+	close(errCh)
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	return multierr.Combine(errs...)
 }
 
 func (r *ReedSolomon) getShardSizeAndCheck(dVects [][]byte, pVects [][]byte) (int, error) {
