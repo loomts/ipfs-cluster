@@ -311,7 +311,7 @@ P.S. You can use ipfs get instead of ipfs-cluster-ctl ecget if you do not use Er
 					err = globalClient.ECGet(ctx, ci, outpath)
 					checkErr("ecget", err)
 				} else {
-					checkErr("", errors.New("need a cid"))
+					checkErr("ecget", errors.New("need a cid"))
 				}
 				return nil
 			},

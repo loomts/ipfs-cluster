@@ -15,6 +15,8 @@ import (
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs/boxo/files"
 	"github.com/ipfs/boxo/ipld/merkledag"
+	dag "github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs/boxo/ipld/unixfs"
 	unixfile "github.com/ipfs/boxo/ipld/unixfs/file"
 	uio "github.com/ipfs/boxo/ipld/unixfs/io"
 	blocks "github.com/ipfs/go-block-format"
@@ -97,17 +99,31 @@ func (ds *dagSession) GetRawFile(ctx context.Context, ci cid.Cid) ([]byte, error
 	}
 }
 
-func (ds *dagSession) GetArchivedFile(ctx context.Context, ci cid.Cid, name string) ([]byte, error) {
+func (ds *dagSession) GetArchivedFile(ctx context.Context, ci cid.Cid, name string, out chan<- []byte) error {
 	root, err := ds.Get(ctx, ci)
 	if err != nil {
-		return nil, err
+		close(out)
+		return err
+	}
+
+	archive := false
+	switch dn := root.(type) {
+	case *dag.ProtoNode:
+		fsn, err := unixfs.FSNodeFromBytes(dn.Data())
+		if err != nil {
+			close(out)
+			return err
+		}
+		if fsn.IsDir() {
+			archive = true
+		}
 	}
 	f, err := unixfile.NewUnixfsFile(ctx, ds, root)
 	if err != nil {
-		return nil, err
+		close(out)
+		return err
 	}
-	fmt.Println("new file successfully")
-	return fileArchive(f, name)
+	return fileArchive(f, name, archive, out)
 }
 
 func (ds *dagSession) Get(ctx context.Context, ci cid.Cid) (format.Node, error) {
@@ -203,9 +219,9 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int
 			case err := <-errCh:
 				needCh <- i
 				logger.Errorf("cannot get %dth shard: %s", i, err)
-			case <-time.After(5 * time.Minute):
+			case <-time.After(3 * time.Minute):
 				needCh <- i
-				logger.Errorf("cannot get %dth shard: timeout 1min", i)
+				logger.Errorf("cannot get %dth shard: timeout 3min", i)
 			}
 		}(i, sh)
 	}
@@ -293,9 +309,11 @@ func (ds *dagSession) RemoveMany(ctx context.Context, cids []cid.Cid) error {
 }
 
 // https://github.com/ipfs/kubo/blob/a7c65184976e8717ac23d7efaa5b0d477ad15deb/core/commands/get.go#L93
-func fileArchive(f files.Node, name string) ([]byte, error) {
-	archive := false
-	compression := 0
+func fileArchive(f files.Node, name string, archive bool, out chan<- []byte) error {
+	logger.Infof("archiving file %s", name)
+	defer close(out)
+	compression := gzip.NoCompression // compression seems only has little effect, so tar is used anyway as a transport format
+
 	// need to connect a writer to a reader
 	piper, pipew := io.Pipe()
 	checkErrAndClosePipe := func(err error) bool {
@@ -313,7 +331,7 @@ func fileArchive(f files.Node, name string) ([]byte, error) {
 	// compression determines whether to use gzip compression.
 	maybeGzw, err := newMaybeGzWriter(bufw, compression)
 	if checkErrAndClosePipe(err) {
-		return nil, err
+		return err
 	}
 
 	closeGzwAndPipe := func() {
@@ -326,39 +344,34 @@ func fileArchive(f files.Node, name string) ([]byte, error) {
 		pipew.Close() // everything seems to be ok.
 	}
 
-	if !archive && compression != gzip.NoCompression {
-		// the case when the node is a file
-		r := files.ToFile(f)
-		if r == nil {
-			return nil, errors.New("file is not regular")
-		}
-
-		go func() {
-			if _, err := io.Copy(maybeGzw, r); checkErrAndClosePipe(err) {
-				return
-			}
-			closeGzwAndPipe() // everything seems to be ok
-		}()
-	} else {
-		// the case for 1. archive, and 2. not archived and not compressed, in which tar is used anyway as a transport format
-
-		// construct the tar writer
-		w, err := files.NewTarWriter(maybeGzw)
-		if checkErrAndClosePipe(err) {
-			return nil, err
-		}
-
-		go func() {
-			// write all the nodes recursively
-			if err := w.WriteFile(f, name); checkErrAndClosePipe(err) {
-				return
-			}
-			w.Close()         // close tar writer
-			closeGzwAndPipe() // everything seems to be ok
-		}()
+	// construct the tar writer
+	w, err := files.NewTarWriter(maybeGzw)
+	if checkErrAndClosePipe(err) {
+		return err
 	}
 
-	return io.ReadAll(piper)
+	go func() {
+		// write all the nodes recursively
+		if err := w.WriteFile(f, name); checkErrAndClosePipe(err) {
+			return
+		}
+		w.Close()         // close tar writer
+		closeGzwAndPipe() // everything seems to be ok
+	}()
+
+	for {
+		b := make([]byte, DefaultBufSize)
+		n, err := piper.Read(b)
+		if n != 0 {
+			out <- b[:n:n]
+		}
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return err
+		}
+	}
 }
 
 func newMaybeGzWriter(w io.Writer, compression int) (io.WriteCloser, error) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
-
 	files "github.com/ipfs/boxo/files"
 	"github.com/ipfs/boxo/tar"
 	peer "github.com/libp2p/go-libp2p/core/peer"
@@ -705,16 +705,47 @@ func (c *defaultClient) Health(ctx context.Context) error {
 	return err
 }
 
+type clearlineReader struct {
+	io.Reader
+	out io.Writer
+}
+
+func (r *clearlineReader) Read(p []byte) (n int, err error) {
+	n, err = r.Reader.Read(p)
+	if err == io.EOF {
+		// callback
+		fmt.Fprintf(r.out, "\033[2K\r") // clear progress bar line on EOF
+	}
+	return
+}
+
 func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid, outpath string) error {
 	ctx, span := trace.StartSpan(ctx, "client/ECGet")
 	defer span.End()
-
-	var b []byte
+	piper, pipew := io.Pipe()
+	defer piper.Close()
+	bCh := make(chan []byte, 1024)
+	errCh := make(chan error, 1)
+	// consume pipe
+	go func() {
+		defer close(errCh)
+		extractor := &tar.Extractor{Path: path.Join(outpath, ci.String())}
+		errCh <- extractor.Extract(piper)
+	}()
+	// write file stream to pipe
+	go func() {
+		for b := range bCh {
+			pipew.Write(b)
+		}
+		pipew.Close()
+	}()
 	handler := func(dec *json.Decoder) error {
+		var b []byte
 		err := dec.Decode(&b)
 		if err != nil {
 			return err
 		}
+		bCh <- b
 		return nil
 	}
 
@@ -722,9 +753,9 @@ func (c *defaultClient) ECGet(ctx context.Context, ci api.Cid, outpath string) e
 	if err != nil {
 		return err
 	}
+	close(bCh)
 
-	extractor := &tar.Extractor{Path: path.Join(outpath, ci.String())}
-	return extractor.Extract(bytes.NewReader(b))
+	return <-errCh
 }
 
 func (c *defaultClient) ECRecovery(ctx context.Context, out chan<- api.Pin) error {

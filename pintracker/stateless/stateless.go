@@ -429,7 +429,7 @@ func (spt *Tracker) StatusAll(ctx context.Context, filter api.TrackerStatus, out
 		ipfsStatus, pinnedInIpfs := ipfsRecursivePins[api.Cid(p.Cid)]
 
 		switch {
-		case p.Type == api.MetaType:
+		case p.Type == api.MetaType, p.Type == api.ClusterDAGType:
 			info.Status = api.TrackerStatusSharded
 		case p.IsRemotePin(spt.peerID):
 			info.Status = api.TrackerStatusRemote
@@ -438,7 +438,7 @@ func (spt *Tracker) StatusAll(ctx context.Context, filter api.TrackerStatus, out
 			// unless the filter is Pinned |
 			// UnexpectedlyUnpinned. We filter at the end.
 			info.Status = ipfsStatus.ToTrackerStatus()
-		default:
+	default:
 			// Not on an operation
 			// Not a meta pin
 			// Not a remote pin

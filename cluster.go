@@ -2298,15 +2298,16 @@ func (c *Cluster) RepoGCLocal(ctx context.Context) (api.RepoGC, error) {
 	return resp, nil
 }
 
-func (c *Cluster) ECGet(ctx context.Context, ci api.Cid) ([]byte, error) {
+func (c *Cluster) ECGet(ctx context.Context, ci api.Cid, out chan<- []byte) error {
 	ctx, span := trace.StartSpan(ctx, "cluster/ECGet")
 	defer span.End()
 	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
 	pin, err := c.ECReConstruct(ctx, ci, dgs)
 	if err != nil {
-		return nil, fmt.Errorf("error reconstructing file: %s", err)
+		close(out)
+		return fmt.Errorf("error reconstructing file: %s", err)
 	}
-	return dgs.GetArchivedFile(ctx, pin.Cid.Cid, pin.Name)
+	return dgs.GetArchivedFile(ctx, pin.Cid.Cid, pin.Name, out)
 }
 
 func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {

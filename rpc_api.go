@@ -442,13 +442,18 @@ func (rpcapi *ClusterRPCAPI) IPFSID(ctx context.Context, in peer.ID, out *api.IP
 }
 
 // ECGet Erasure Coding Get, get and reconstruct file if needed
-func (rpcapi *ClusterRPCAPI) ECGet(ctx context.Context, in api.Cid, out *[]byte) error {
-	b, err := rpcapi.c.ECGet(ctx, in)
-	if err != nil {
-		return err
+func (rpcapi *ClusterRPCAPI) ECGet(ctx context.Context, in <-chan api.Cid, out chan<- []byte) error {
+	select {
+	case <-ctx.Done():
+		close(out)
+		return ctx.Err()
+	case ci, ok := <-in:
+		if !ok {
+			close(out)
+			return errors.New("no pinType provided for pin/ls")
+		}
+		return rpcapi.c.ECGet(ctx, ci, out)
 	}
-	*out = b
-	return nil
 }
 
 // ECRecovery scan Erasure Coding files and reconstuct them

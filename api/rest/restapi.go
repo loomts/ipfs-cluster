@@ -867,27 +867,31 @@ func repoGCToGlobal(r types.RepoGC) types.GlobalRepoGC {
 }
 
 func (api *API) ECGetHandler(w http.ResponseWriter, r *http.Request) {
-	var b []byte
+	in := make(chan types.Cid, 1)
+	out := make(chan []byte, common.StreamChannelSize)
+	errCh := make(chan error, 1)
 	if pin := api.ParseCidOrFail(w, r); pin.Defined() {
-		err := api.rpcClient.CallContext(
-			r.Context(),
-			"",
-			"Cluster",
-			"ECGet",
-			pin.Cid,
-			&b,
-		)
-
-		if err != nil {
-			api.SendResponse(w, common.SetStatusAutomatically, err, nil)
-			return
-		}
+		in <- pin.Cid
+		close(in)
+		go func() {
+			defer close(errCh)
+			errCh <- api.rpcClient.Stream(
+				r.Context(),
+				"",
+				"Cluster",
+				"ECGet",
+				in,
+				out,
+			)
+		}()
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "close")
-		enc := json.NewEncoder(w)
-		enc.Encode(b)
-		api.SendResponse(w, common.SetStatusAutomatically, err, nil)
+		for b := range out {
+			enc := json.NewEncoder(w)
+			enc.Encode(b)
+		}
+		api.SendResponse(w, common.SetStatusAutomatically, <-errCh, nil)
 	} else {
 		api.SendResponse(w, common.SetStatusAutomatically, errors.New("incorrect cid"), nil)
 	}

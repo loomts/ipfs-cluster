@@ -301,6 +301,7 @@ func (dgs *DAGService) logStats(metaPin, clusterDAGPin api.Cid) {
 
 	statsFmt := `sharding session successful:
 CID: %s
+Name: %s
 ClusterDAG: %s
 Total shards: %d
 Total size: %s
@@ -311,6 +312,7 @@ Ingest Rate: %s/s
 	logger.Infof(
 		statsFmt,
 		metaPin,
+		dgs.addParams.Name,
 		clusterDAGPin,
 		len(dgs.shards),
 		humanize.Bytes(dgs.totalSize),
