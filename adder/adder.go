@@ -183,7 +183,7 @@ func (a *Adder) FromFiles(ctx context.Context, f files.Directory) (api.Cid, erro
 				if parity.Name == "" { // channel closed
 					return
 				}
-				logger.Infof("receive parity: %s size: %d", parity.Name, len(parity.RawData))
+				logger.Infof("receive parity: %s size: %d", a.params.Name+"-"+parity.Name, len(parity.RawData))
 				pf := files.NewBytesFile(parity.RawData)
 				a.dgs2.SetParity(a.params.Name + "-" + parity.Name)
 				parityRoot, err := dagFmtr2.Add(parity.Name, pf)

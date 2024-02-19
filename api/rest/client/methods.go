@@ -619,6 +619,7 @@ func (c *defaultClient) Add(
 	defer span.End()
 
 	addFiles := make([]files.DirEntry, len(paths))
+	sum := uint64(0)
 	for i, p := range paths {
 		u, err := url.Parse(p)
 		if err != nil {
@@ -635,6 +636,30 @@ func (c *defaultClient) Add(
 				close(out)
 				return fmt.Errorf("nocopy option is only valid for URLs")
 			}
+			if params.Erasure && params.ShardSize == 1024*1024*100 {
+				stat, err := os.Stat(p)
+				if err != nil {
+					close(out)
+					return err
+				}
+				if stat.IsDir() {
+					err := filepath.Walk(p, func(_ string, info os.FileInfo, err error) error {
+						if err != nil {
+							return err
+						}
+						if !info.IsDir() {
+							sum += uint64(info.Size())
+						}
+						return nil
+					})
+					if err != nil {
+						close(out)
+						return err
+					}
+				} else {
+					sum += uint64(stat.Size())
+				}
+			}
 			name, addFile, err = makeSerialFile(p, params)
 			if err != nil {
 				close(out)
@@ -642,6 +667,11 @@ func (c *defaultClient) Add(
 			}
 		}
 		addFiles[i] = files.FileEntry(name, addFile)
+	}
+	if params.Erasure && params.ShardSize == 1024*1024*100 {
+		// estimate shard size to fit RS encode shard size and make max shardsize = 100MB
+		extraMetaSize := sum / 5120 // 5MB rawdata make 1KB meta
+		params.ShardSize = (sum+extraMetaSize)/uint64(params.DataShards) + 256*1024
 	}
 
 	sliceFile := files.NewSliceDirectory(addFiles)

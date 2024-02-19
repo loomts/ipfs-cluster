@@ -2456,8 +2456,6 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 		if idx >= len(dShardSize) {
 			go func() {
 				parityAddParams := api.DefaultAddParams()
-				parityAddParams.Shard = true
-				parityAddParams.Erasure = true
 				parityAddParams.RawLeaves = true
 				if !strings.HasSuffix(clusterPin.Name, "clusterDAG") {
 					errCh <- fmt.Errorf("invalid clusterPin.Name: %s", clusterPin.Name)
@@ -2466,9 +2464,6 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 				parityAddParams.Name = clusterPin.Name[:len(clusterPin.Name)-len("clusterDAG")] + fmt.Sprintf("parity-shard-%d", idx-len(dShardSize))
 				parityAddParams.ReplicationFactorMin = 1
 				parityAddParams.ReplicationFactorMax = 1
-				parityAddParams.DataShards = clusterPin.DataShards
-				parityAddParams.ParityShards = clusterPin.ParityShards
-				parityAddParams.ShardSize = clusterPin.ShardSize
 				parityAddParams.UserAllocations = []peer.ID{p}
 				mapDir := files.NewMapDirectory(map[string]files.Node{parityAddParams.Name: files.NewBytesFile(shard)})
 				r := files.NewMultiFileReader(mapDir, true, false)
