@@ -1676,7 +1676,7 @@ func (c *Cluster) PinUpdate(ctx context.Context, from api.Cid, to api.Cid, opts 
 
 	// Hector: I am not sure whether it has any point to update something
 	// like a MetaType.
-	// erasure coding reconstruct (update allocation))))
+	// erasure coding reconstruct (update allocation)
 	// if existing.Type != api.DataType {
 	// 	return api.Pin{}, errors.New("this pin type cannot be updated")
 	// }
@@ -2412,7 +2412,7 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 		if err != nil {
 			return api.Pin{}, err
 		}
-		logger.Infof("reconstruct %s success, recover %d shards, repinning recovered shards...", rootPin.Cid, len(needRepin))
+		logger.Infof("reconstruct %s success, recover %d shards, repinning %v", rootPin.Cid, len(needRepin), needRepin)
 		err = c.ECPutShards(ctx, dataVects, parityVects, needRepin, clusterPin, blockMeta, dShardSize)
 		if err != nil {
 			return api.Pin{}, err
@@ -2455,13 +2455,14 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 		// repin parity shard
 		if idx >= len(dShardSize) {
 			go func() {
+				defer wg.Done()
 				parityAddParams := api.DefaultAddParams()
 				parityAddParams.RawLeaves = true
 				if !strings.HasSuffix(clusterPin.Name, "clusterDAG") {
 					errCh <- fmt.Errorf("invalid clusterPin.Name: %s", clusterPin.Name)
 					return
 				}
-				parityAddParams.Name = clusterPin.Name[:len(clusterPin.Name)-len("clusterDAG")] + fmt.Sprintf("parity-shard-%d", idx-len(dShardSize))
+				parityAddParams.Name = clusterPin.Name[:len(clusterPin.Name)-len("clusterDAG")] + fmt.Sprintf("parity-shard-%d", tidx)
 				parityAddParams.ReplicationFactorMin = 1
 				parityAddParams.ReplicationFactorMax = 1
 				parityAddParams.UserAllocations = []peer.ID{p}
@@ -2475,18 +2476,17 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 				}
 				logger.Infof("repin parity shard(%s) allocation to %v", ci, p)
 			}()
-			return nil
+			continue
 		}
 
-		// update data shard
+		// repin data shard
 		blockCh := make(chan api.NodeWithMeta, 256)
 		// repin blocks of raw shard to ipfs directly
 		go func(shard []byte, bmeta []sharding.ECBlockMeta) {
 			defer wg.Done()
 			// see adder/sharding/shard.go Flush(), dagNode is metadata pin of shard
 			dagNode := make(map[string]cid.Cid)
-
-			// split rawdata to blocks and record metadata of shard
+			// split rawdata to blocks and stream then to IPFS
 			for _, m := range bmeta {
 				raw := shard[:m.Size:m.Size]
 				ci, err := cid.Decode(m.Cid)
@@ -2522,7 +2522,6 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 					CumSize: uint64(len(node.RawData())),
 				}
 			}
-			logger.Infof("update data shard(%s) allocation to %v", shardCid, p)
 			close(blockCh)
 			bs := adder.NewBlockStreamer(c.ctx, c.rpcClient, []peer.ID{p}, blockCh)
 			select {
@@ -2535,6 +2534,15 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 				errCh <- err
 				return
 			}
+			// update shard pin allocation
+			opts := clusterPin.PinOptions
+			opts.UserAllocations = []peer.ID{p}
+			_, err = c.PinUpdate(ctx, api.NewCid(shardCid), api.NewCid(shardCid), opts)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			logger.Infof("repin data shard(%s) allocation to %v", shardCid, p)
 		}(shard, blockMeta[needRepin[i]])
 	}
 	wg.Wait()

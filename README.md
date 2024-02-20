@@ -57,12 +57,12 @@ dctltest() {
   dctl pin rm $ci
 
   seq 1 250000 > tmpfile
-  dctl add tmpfile -n tmpfile --shard --shard-size 512000 --erasure #--erasure --data-shards 4 --parity-shards 2
+  dctl add tmpfile -n tmpfile --erasure --shard-size 512000 # --data-shards 4 --parity-shards 2
   rm tmpfile
 
   # find frist peer no equal cluster0 and store sharding data
   # awk '$1 == 1 && $2 != 0 {print $2}' means that find the peer that store one shard and it's id not cluster0(cluster0 expose port)
-  x=$(dctl status --filter pinned | grep cluster | awk -F'cluster' '{print $2}' | awk '{print $1}' | sort | uniq -c | awk '$1 == 3 && $2 != {print $2}' | head -n 1)
+  x=$(dctl status --filter pinned | grep -A 2 tmpfile | awk -F'cluster' '{print $2}' | awk '{print $1}' | sort | uniq -c | awk '$1 == 3 && $2 != 0 {print $2}' | head -n 1)
   docker stop "cluster$x" "ipfs$x"
 
   dctl ipfs gc # clean ipfs cache

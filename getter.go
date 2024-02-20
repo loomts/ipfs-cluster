@@ -175,7 +175,7 @@ func (ds *dagSession) decode(ctx context.Context, rawb []byte, ci cid.Cid) (form
 	}
 	nd, err := ipldDecoder.DecodeNode(ctx, b)
 	if err != nil {
-		logger.Errorf("Failed to decode block: %s", err)
+		logger.Errorf("Failed to decode block: %s (len:%d)", err, len(rawb))
 		return nil, err
 	}
 	return nd, err
@@ -183,10 +183,10 @@ func (ds *dagSession) decode(ctx context.Context, rawb []byte, ci cid.Cid) (form
 
 // ECGetShards get both data shards and parity shards by root cid
 func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int) ([][]byte, [][]byte, []int, error) {
-	links, errs := ds.ResolveCborLinks(ctx, ci) // get sorted data shards
-	if errs != nil {
-		logger.Error(errs)
-		return nil, nil, nil, errs
+	links, err := ds.ResolveCborLinks(ctx, ci) // get sorted shards
+	if err != nil {
+		logger.Error(err)
+		return nil, nil, nil, err
 	}
 	vects := make([][]byte, len(links))
 	needCh := make(chan int, len(links)) // default RS(4,2) enable 1/3 shards broken
@@ -254,7 +254,7 @@ func (ds *dagSession) ResolveCborLinks(ctx context.Context, shard api.Cid) ([]*f
 	for i := 0; i < len(blks); i++ {
 		sh, _, err := clusterDAGNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
 		if err != nil {
-			err = fmt.Errorf("cannot resolve %dst data shard: %s", i, err)
+			err = fmt.Errorf("cannot resolve %dst shard: %s", i, err)
 			errors.Join(errs, err)
 		}
 		links = append(links, sh)
@@ -265,7 +265,7 @@ func (ds *dagSession) ResolveCborLinks(ctx context.Context, shard api.Cid) ([]*f
 // convert shard to []byte
 func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, idx int, dShardNum int) ([]byte, error) {
 	if idx < dShardNum {
-		links, err := ds.ResolveCborLinks(ctx, api.NewCid(sh.Cid)) // get sorted data shards
+		links, err := ds.ResolveCborLinks(ctx, api.NewCid(sh.Cid)) // get sorted shards
 		if err != nil {
 			return nil, fmt.Errorf("cannot resolve shard(%s): %s", sh.Cid, err)
 		}
