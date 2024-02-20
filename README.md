@@ -46,9 +46,8 @@ docker logs -f cluster0
 
 # little change may let test fail
 dctltest() {
-  cd $GOPATH/src/ipfs-cluster/cmd/ipfs-cluster-ctl && make
   cd $GOPATH/src/ipfs-cluster
-
+  make cmd/ipfs-cluster-ctl
   docker build -t ipfs-cluster-erasure -f Dockerfile-erasure .
   docker-compose -f docker-compose-erasure.yml up -d
 
@@ -58,7 +57,6 @@ dctltest() {
 
   seq 1 250000 > tmpfile
   dctl add tmpfile -n tmpfile --erasure --shard-size 512000 # --data-shards 4 --parity-shards 2
-  rm tmpfile
 
   # find frist peer no equal cluster0 and store sharding data
   # awk '$1 == 1 && $2 != 0 {print $2}' means that find the peer that store one shard and it's id not cluster0(cluster0 expose port)
@@ -66,15 +64,15 @@ dctltest() {
   docker stop "cluster$x" "ipfs$x"
 
   dctl ipfs gc # clean ipfs cache
-  dctl status --filter pinned
 
-  output=$(dctl ecrecovery | awk '{print $1}')
-
-  if [ "$output" = "$ci" ]; then
-      echo "The strings are equal, test pass."
+  dctl ecget $ci
+  diff $ci tmpfile > /dev/null  # 将 diff 的输出重定向到 /dev/null
+  if [ $? -eq 0 ]; then
+      echo "Files are identical, test pass ^^"
   else
-      echo "The strings are not equal, test fail."
+      echo "Files are different, test fail :D"
   fi
+  rm tmpfile
 }
 
 ```

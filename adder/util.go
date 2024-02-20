@@ -159,9 +159,8 @@ func DefaultECAllocate(peers []peer.ID, dShards int, pShards int, idx int, isDat
 	pPeerNum := len(peers) - dPeerNum
 	if isData {
 		return peers[idx%dPeerNum], nil
-	} else {
-		return peers[dPeerNum+idx%pPeerNum], nil
 	}
+	return peers[dPeerNum+idx%pPeerNum], nil
 }
 
 // ErasurePin helps sending local and remote RPC pin requests.(by setting dest and enable the promission of RPC Call)
