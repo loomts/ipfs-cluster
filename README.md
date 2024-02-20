@@ -50,6 +50,7 @@ dctltest() {
   make cmd/ipfs-cluster-ctl
   docker build -t ipfs-cluster-erasure -f Dockerfile-erasure .
   docker-compose -f docker-compose-erasure.yml up -d
+  sleep 5
 
   # QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ is the cid of tmpfile
   ci="QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ"
@@ -64,14 +65,17 @@ dctltest() {
   docker stop "cluster$x" "ipfs$x"
 
   dctl ipfs gc # clean ipfs cache
+  sleep 5
 
   dctl ecget $ci
-  diff $ci tmpfile > /dev/null  # 将 diff 的输出重定向到 /dev/null
+  diff $ci tmpfile > /dev/null
   if [ $? -eq 0 ]; then
       echo "Files are identical, test pass ^^"
   else
       echo "Files are different, test fail :D"
   fi
+  dctl pin rm $ci
+  rm $ci
   rm tmpfile
 }
 
@@ -85,7 +89,7 @@ P.S. If you notice no disk space left, use `docker system df` to check docker ca
 > P.S. Using --erasure also force enables raw-leaves and shard
 
 `ecget`: Get erasure file by cid, if file was broken(canot get all shards) it will automatically recovery it. 
-> P.S. Shell command can download file and directory directly. But rpc `Cluster.ECGet` can only retrieve tar archived []byte, so you need to use `tar.Extractor` to extract it to FileSystem.
+> P.S. Shell command can download file and directory directly. But rpc `Cluster.ECGet` can only retrieve tar archived []byte by stream, so you need to use `tar.Extractor` to extract it to FileSystem.
 
 `ecrecovery`: Scan all erasure coding files pinned, if some files broken then try to recover.
 

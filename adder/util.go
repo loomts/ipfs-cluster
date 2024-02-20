@@ -133,7 +133,19 @@ func BlockAllocate(ctx context.Context, rpc *rpc.Client, pinOpts api.PinOptions)
 
 // DefaultECAllocate choose one peer to send shard
 // more suitable for EC(4,2), and 3 peers
-func DefaultECAllocate(peers []peer.ID, dShards int, pShards int, idx int, isData bool) (peer.ID, error) {
+func DefaultECAllocate(ctx context.Context, rpc *rpc.Client, dShards int, pShards int, idx int, isData bool) (peer.ID, error) {
+	var peers []peer.ID
+	err := rpc.CallContext(
+		ctx,
+		"",
+		"Consensus",
+		"Peers",
+		struct{}{},
+		&peers,
+	)
+	if err != nil {
+		return "", err
+	}
 	if len(peers) == 0 {
 		return "", errors.New("no peers")
 	}

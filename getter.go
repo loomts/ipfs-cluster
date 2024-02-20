@@ -219,9 +219,9 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int
 			case err := <-errCh:
 				needCh <- i
 				logger.Errorf("cannot get %dth shard: %s", i, err)
-			case <-time.After(3 * time.Minute):
+			case <-time.After(2 * time.Minute):
 				needCh <- i
-				logger.Errorf("cannot get %dth shard: timeout 3min", i)
+				logger.Errorf("cannot get %dth shard: timeout 2min", i)
 			}
 		}(i, sh)
 	}

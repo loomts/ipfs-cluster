@@ -2427,11 +2427,6 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVects [][]byte, needRepin []int, clusterPin api.Pin, blockMeta map[int][]sharding.ECBlockMeta, dShardSize []int) error {
 	ctx, span := trace.StartSpan(ctx, "cluster/BlockPut")
 	defer span.End()
-	livePeers, err := adder.BlockAllocate(ctx, c.rpcClient, clusterPin.PinOptions)
-	if err != nil {
-		return err
-	}
-
 	var wg sync.WaitGroup
 	wg.Add(len(needRepin))
 	errCh := make(chan error, len(needRepin))
@@ -2450,7 +2445,7 @@ func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVec
 				shard = dataVects[idx]
 			}
 
-			p, err := adder.DefaultECAllocate(livePeers, clusterPin.DataShards, clusterPin.ParityShards, idx, isData)
+			p, err := adder.DefaultECAllocate(ctx, c.rpcClient, clusterPin.DataShards, clusterPin.ParityShards, idx, isData)
 			if err != nil {
 				errCh <- err
 				return
