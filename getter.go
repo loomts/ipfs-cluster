@@ -183,6 +183,9 @@ func (ds *dagSession) decode(ctx context.Context, rawb []byte, ci cid.Cid) (form
 
 // ECGetShards get both data shards and parity shards by root cid
 func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int) ([][]byte, [][]byte, []int, error) {
+	timeout := 2 * time.Minute
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	links, err := ds.ResolveCborLinks(ctx, ci) // get sorted shards
 	if err != nil {
 		logger.Error(err)
@@ -214,14 +217,14 @@ func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int
 				resultCh <- vect
 			}()
 			select {
+			case <-ctx.Done():
+				needCh <- i
+				logger.Errorf("cannot get %dth shard: timeout %v", i, timeout)
 			case vects[i] = <-resultCh:
 				return
 			case err := <-errCh:
 				needCh <- i
 				logger.Errorf("cannot get %dth shard: %s", i, err)
-			case <-time.After(2 * time.Minute):
-				needCh <- i
-				logger.Errorf("cannot get %dth shard: timeout 2min", i)
 			}
 		}(i, sh)
 	}

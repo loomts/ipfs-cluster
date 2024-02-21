@@ -2493,56 +2493,70 @@ func (c *Cluster) repinParityShard(ctx context.Context, shard []byte, p peer.ID,
 
 // repinDataShard handles the repinning of a data shard.
 func (c *Cluster) repinDataShard(ctx context.Context, shard []byte, p peer.ID, bmeta []sharding.ECBlockMeta, clusterPin api.Pin) error {
-	blockCh := make(chan api.NodeWithMeta, 256)
+	blockCh := make(chan api.NodeWithMeta, 1024)
 	dagNode := make(map[string]cid.Cid)
-	// split rawdata to blocks and stream then to IPFS
-	for _, m := range bmeta {
-		raw := shard[:m.Size:m.Size]
-		ci, err := cid.Decode(m.Cid)
-		dagNode[fmt.Sprintf("%d", m.BlockNo)] = ci
+
+	errCh := make(chan error, 1)
+	var shardCid cid.Cid
+	go func() {
+		defer close(blockCh)
+		// split rawdata to blocks and stream then to IPFS
+		for _, m := range bmeta {
+			raw := shard[:m.Size:m.Size]
+			ci, err := cid.Decode(m.Cid)
+			dagNode[fmt.Sprintf("%d", m.BlockNo)] = ci
+			if err != nil {
+				errCh <- err
+				return
+			}
+			newCi, err := ci.Prefix().Sum(raw)
+			if newCi != ci {
+				errCh <- fmt.Errorf("ECPutShards error, new block's cid(%s) not equal to prev(%s)", newCi, ci)
+				return
+			}
+			blockCh <- api.NodeWithMeta{
+				Cid:     api.NewCid(ci),
+				Data:    raw,
+				CumSize: uint64(len(raw)),
+			}
+			shard = shard[m.Size:]
+		}
+		if len(shard) != 0 {
+			errCh <- fmt.Errorf("ECPutShards error, invalid recovery shard size")
+			return
+		}
+		nodes, err := sharding.MakeDAG(ctx, dagNode)
 		if err != nil {
-			return err
+			errCh <- err
+			return
 		}
-		newCi, err := ci.Prefix().Sum(raw)
-		if newCi != ci {
-			return fmt.Errorf("ECPutShards error, new block's cid(%s) not equal to prev(%s)", newCi, ci)
+		shardCid = nodes[0].Cid()
+		for _, node := range nodes {
+			blockCh <- api.NodeWithMeta{
+				Cid:     api.NewCid(node.Cid()),
+				Data:    node.RawData(),
+				CumSize: uint64(len(node.RawData())),
+			}
 		}
-		blockCh <- api.NodeWithMeta{
-			Cid:     api.NewCid(ci),
-			Data:    raw,
-			CumSize: uint64(len(raw)),
-		}
-		shard = shard[m.Size:]
-	}
-	if len(shard) != 0 {
-		return fmt.Errorf("ECPutShards error, invalid recovery shard size")
-	}
-	nodes, err := sharding.MakeDAG(ctx, dagNode)
-	if err != nil {
-		return err
-	}
-	shardCid := nodes[0].Cid()
-	for _, node := range nodes {
-		blockCh <- api.NodeWithMeta{
-			Cid:     api.NewCid(node.Cid()),
-			Data:    node.RawData(),
-			CumSize: uint64(len(node.RawData())),
-		}
-	}
-	close(blockCh)
+	}()
+
 	bs := adder.NewBlockStreamer(c.ctx, c.rpcClient, []peer.ID{p}, blockCh)
 	select {
 	case <-ctx.Done():
-		return err
+		return <-errCh
 	case <-bs.Done():
+		close(errCh)
 	}
 	if err := bs.Err(); err != nil {
+		return err
+	}
+	if err := <-errCh; err != nil {
 		return err
 	}
 	// update shard pin allocation
 	opts := clusterPin.PinOptions
 	opts.UserAllocations = []peer.ID{p}
-	_, err = c.PinUpdate(ctx, api.NewCid(shardCid), api.NewCid(shardCid), opts)
+	_, err := c.PinUpdate(ctx, api.NewCid(shardCid), api.NewCid(shardCid), opts)
 	if err != nil {
 		return err
 	}
