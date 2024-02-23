@@ -96,7 +96,8 @@ P.S. If you notice no disk space left, use `docker system df` to check docker ca
 ### TODO
 This project currently supports fundamental features about Erasure Code. However, there are something need to be optimizated:
 
-1. At present, we use `sharding/dag_service` to store the original file and `single/dag_service` to store single files. A more elegant solution would be to create a new `adder` module to combine them.
+1. At present, we use `sharding/dag_service` to store the original file and `single/dag_service` to store single files. A more elegant solution would be to create a new `adder` module to combine them. 
+   > draft: One possible way is use block as unit, to RS encode and put the pairty blocks into origin Merkle DAG. It will make a new different file(combine origin file and parity blocks). then we pin this file to avoid gc and figure out when some block loss, how to retrieve this file into different group then use RS decode get origin blocks. This method must change the logic of layout func. Because default balance layout will fill probably 174 raw blocks into a no-leave node, we need to calculate the number of parity blocks pre no-leave node and fill with parity blocks.
 2. Support for block-level erasure. ~~set shard size=defaultBlockSize is block-level erasure~~
 3. When using `single/dag_service` to add parity shards as individual files, make `api.NodeWithMeta` and `sync.Once` as a slice is simple but stupid solution to prevent multiple invocations of Finalize. Each parity shard uses a unique `api.NodeWithMeta` and `sync.Once`, avoiding conflicts. However, this approach disrupts the original structure of `single/dag_service`, it return TODO1.
 
