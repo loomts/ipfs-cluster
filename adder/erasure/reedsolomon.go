@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
-	"go.uber.org/multierr"
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	dag "github.com/ipfs/boxo/ipld/merkledag"
@@ -37,24 +36,18 @@ type StatBlock struct {
 	api.Cid
 }
 
-type ParityShard struct {
-	RawData  []byte
-	Name     string
-	Links    map[int]api.Cid // Links to data shards
-	LinkSize map[api.Cid]int
-}
-
 type Shard struct {
 	api.Cid
+	Idx     int
 	Name    string
 	RawData []byte
 	Links   map[int]api.Cid // Links to blocks
 }
 
 type Batch struct {
-	vects [][]byte
-	need  []int
-	has   []int
+	Idx       int
+	NeedRepin []int // Shards[i] broken, need to repin
+	Shards    [][]byte
 }
 
 type ReedSolomon struct {
@@ -227,93 +220,104 @@ func (r *ReedSolomon) SendBlockTo() chan<- StatBlock {
 	return r.blockCh
 }
 
-// SplitAndRecon split data and parity vects and alignL to batch and reconstruct
-func (r *ReedSolomon) SplitAndRecon(dataVects [][]byte, parityVects [][]byte, dShardSize []int) error {
-	d := r.dataShards
-	p := r.parityShards
-	if len(parityVects)%p != 0 {
-		return errors.New("parity vects length must be multiple of erasure coding parityShards")
-	}
-	errCh := make(chan error, len(parityVects)/p) // have len(parityVects) % p == 0
-	wg := sync.WaitGroup{}
-	wg.Add(len(parityVects) / p)
-	for i := 0; i < len(parityVects)/p; i++ {
-		// batch reconstruct
-		i := i
-		go func(dVects [][]byte, pVects [][]byte, dSize []int) {
-			defer wg.Done()
-			shardSize, err := r.getShardSizeAndCheck(dVects, pVects)
-			if err != nil {
-				errCh <- fmt.Errorf("reconstruct error:%v", err)
-				return
+// BatchRecon handle each batch, only nil shard need to reconstruct
+func (r *ReedSolomon) BatchRecon(ctx context.Context, batchIdx int, batchDataShardSize []int, shardCh <-chan Shard) (error, Batch) {
+	receShards := 0
+	batchDataShards := len(batchDataShardSize)
+	batch := make([][]byte, r.dataShards+r.parityShards)
+	for {
+		select {
+		case <-ctx.Done():
+			log.Error(ctx.Err())
+			return fmt.Errorf("%d batch err:%s", batchIdx, ctx.Err()), Batch{}
+		case shard := <-shardCh:
+			if len(shard.RawData) == 0 {
+				log.Infof("BatchRecon receive invalid shard")
+				continue
 			}
-			// create new slices, avoid disrupting the original array
-			vects := make([][]byte, 0, len(dVects))
-			vects = append(vects, dVects...)
-			for j := range vects {
-				// fill with 0 to alignL
-				if vects[j] != nil && len(vects[j]) != 0 && len(vects[j]) < shardSize {
-					vects[j] = append(vects[j], make([]byte, shardSize-len(vects[j]))...)
-				}
+			receShards++
+			if shard.Idx >= batchDataShards && batchDataShards < r.dataShards {
+				// last batch of dataVects maybe not enough, make parity idx < decode idx
+				shard.Idx = r.dataShards + shard.Idx - batchDataShards
 			}
-			// last batch of dataVects maybe not enough, append zero vects
-			for len(vects) < d {
-				vects = append(vects, make([]byte, shardSize))
-			}
-			vects = append(vects, pVects...)
+			batch[shard.Idx] = shard.RawData
 
-			for j := range vects {
-				if len(vects[j]) == 0 || vects[j] == nil {
-					if j < d {
-						log.Infof("dataShard %d is nil\n", i*d+j)
-					} else {
-						log.Infof("parityShard %d is nil\n", i*p+j-d)
+			if receShards >= batchDataShards {
+				// create new slices, avoid disrupting the original array
+				vects := make([][]byte, len(batch))
+				for i := 0; i < len(vects); i++ {
+					if len(batch[i]) > 0 {
+						vects[i] = batch[i]
 					}
 				}
+
+				// append 0 for RS decode
+				needRepin, err := r.batchAlignAndCheck(batchDataShards, vects[:r.dataShards], vects[r.dataShards:])
+				if err != nil {
+					return fmt.Errorf("%d batch err:%s", batchIdx, err), Batch{}
+				}
+				err = r.rs.Reconstruct(vects)
+				if err != nil {
+					log.Errorf("reconstruct shards[%d~%d] error:%v", batchIdx*r.dataShards, batchIdx*r.dataShards+len(batchDataShardSize), err)
+					return fmt.Errorf("%d batch err:%s", batchIdx, err), Batch{}
+				}
+
+				// remove appended 0
+				for j := 0; j < len(vects); j++ {
+					if j < batchDataShards {
+						vects[j] = vects[j][:batchDataShardSize[j]:batchDataShardSize[j]]
+					} else if j < r.dataShards {
+						vects[j] = nil
+					}
+				}
+
+				return nil, Batch{Idx: batchIdx, NeedRepin: needRepin, Shards: vects}
 			}
-			err = r.rs.Reconstruct(vects)
-			if err != nil {
-				errCh <- fmt.Errorf("reconstruct shards[%d~%d] error:%v", i*d, min((i+1)*d, len(dataVects)), err)
-				return
-			}
-			// remove diff
-			for j := 0; j < len(dVects); j++ {
-				dVects[j] = vects[j][:dSize[j]]
-			}
-			for j := 0; j < len(pVects); j++ {
-				pVects[j] = vects[j+d][:]
-			}
-		}(dataVects[i*d:min((i+1)*d, len(dataVects))], parityVects[i*p:(i+1)*p], dShardSize[i*d:min((i+1)*d, len(dataVects))])
+		}
 	}
-	wg.Wait()
-	close(errCh)
-	var errs []error
-	for err := range errCh {
-		errs = append(errs, err)
-	}
-	return multierr.Combine(errs...)
 }
 
-func (r *ReedSolomon) getShardSizeAndCheck(dVects [][]byte, pVects [][]byte) (int, error) {
-	shardSize := 0
-	need := 0
-	for _, v := range pVects {
-		if v == nil || len(v) == 0 {
-			need++
-		} else {
-			shardSize = len(v)
+func (r *ReedSolomon) batchAlignAndCheck(batchDataShards int, dVects [][]byte, pVects [][]byte) ([]int, error) {
+	shardSize, need := 0, batchDataShards-r.dataShards // minus full-0 Shards
+
+	for _, shards := range [][][]byte{dVects, pVects} {
+		for _, v := range shards {
+			if len(v) > 0 {
+				shardSize = max(shardSize, len(v))
+			} else {
+				need++
+			}
 		}
 	}
-	for _, v := range dVects {
-		if v == nil || len(v) == 0 {
-			need++
-		} else {
-			shardSize = max(shardSize, len(v))
-		}
-	}
+
 	log.Infof("batch info: dShards:%d, pShards:%d, needRecon:%d, shardSize:%d\n", len(dVects), len(pVects), need, shardSize)
 	if need > r.parityShards {
-		return shardSize, errors.New("data vects not enough, cannot reconstruct")
+		return nil, errors.New("data vects not enough, cannot reconstruct")
 	}
-	return shardSize, nil
+
+	// append 0 to vect for align
+	for i, v := range dVects {
+		if len(v) > 0 && len(v) < shardSize {
+			dVects[i] = append(v, make([]byte, shardSize-len(v))...)
+		}
+		if i >= batchDataShards {
+			dVects[i] = make([]byte, shardSize)
+		}
+	}
+
+	needRepin := make([]int, 0, r.parityShards)
+	for i, vects := range [][][]byte{dVects, pVects} {
+		for j := range vects {
+			if len(vects[j]) == 0 {
+				if i == 0 {
+					needRepin = append(needRepin, j)
+					log.Infof("dataShard %d is nil\n", j)
+				} else {
+					needRepin = append(needRepin, j+batchDataShards)
+					log.Infof("parityShard %d is nil\n", j+batchDataShards)
+				}
+			}
+		}
+	}
+	return needRepin, nil
 }

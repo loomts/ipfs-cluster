@@ -7,16 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"sync"
 	"time"
 
+	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"github.com/ipfs-cluster/ipfs-cluster/adder/sharding"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs/boxo/files"
 	"github.com/ipfs/boxo/ipld/merkledag"
-	dag "github.com/ipfs/boxo/ipld/merkledag"
-	"github.com/ipfs/boxo/ipld/unixfs"
 	unixfile "github.com/ipfs/boxo/ipld/unixfs/file"
 	uio "github.com/ipfs/boxo/ipld/unixfs/io"
 	blocks "github.com/ipfs/go-block-format"
@@ -50,6 +48,7 @@ func init() {
 type dagSession struct {
 	ctx        context.Context
 	dataShards [][]byte
+	cached     bool
 	bmeta      map[string]sharding.ECBlockMeta
 	blockGet   func(ctx context.Context, ci api.Cid) ([]byte, error)
 }
@@ -106,28 +105,16 @@ func (ds *dagSession) GetArchivedFile(ctx context.Context, ci cid.Cid, name stri
 		return err
 	}
 
-	archive := false
-	switch dn := root.(type) {
-	case *dag.ProtoNode:
-		fsn, err := unixfs.FSNodeFromBytes(dn.Data())
-		if err != nil {
-			close(out)
-			return err
-		}
-		if fsn.IsDir() {
-			archive = true
-		}
-	}
 	f, err := unixfile.NewUnixfsFile(ctx, ds, root)
 	if err != nil {
 		close(out)
 		return err
 	}
-	return fileArchive(f, name, archive, out)
+	return fileArchive(f, name, out)
 }
 
 func (ds *dagSession) Get(ctx context.Context, ci cid.Cid) (format.Node, error) {
-	if ds.dataShards != nil {
+	if ds.cached {
 		m := ds.bmeta[ci.String()]
 		b := ds.dataShards[m.ShardNo][m.Offset : m.Offset+m.Size]
 		return ds.decode(ctx, b, ci)
@@ -135,6 +122,7 @@ func (ds *dagSession) Get(ctx context.Context, ci cid.Cid) (format.Node, error) 
 	b, err := ds.blockGet(ctx, api.NewCid(ci))
 	if err != nil {
 		logger.Infof("Failed to get block %s, err: %s", ci, err)
+		return nil, err
 	}
 	return ds.decode(ctx, b, ci)
 }
@@ -175,74 +163,116 @@ func (ds *dagSession) decode(ctx context.Context, rawb []byte, ci cid.Cid) (form
 	}
 	nd, err := ipldDecoder.DecodeNode(ctx, b)
 	if err != nil {
-		logger.Errorf("Failed to decode block: %s (len:%d)", err, len(rawb))
+		logger.Errorf("failed to decode block: %s (len:%d)", err, len(rawb))
 		return nil, err
 	}
 	return nd, err
 }
 
-// ECGetShards get both data shards and parity shards by root cid
-func (ds *dagSession) ECGetShards(ctx context.Context, ci api.Cid, dShardNum int) ([][]byte, [][]byte, []int, error) {
-	timeout := 2 * time.Minute
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	links, err := ds.ResolveCborLinks(ctx, ci) // get sorted shards
-	if err != nil {
-		logger.Error(err)
-		return nil, nil, nil, err
-	}
+// ECGetBatches use links get all shards and batch send them to RS decode
+func (ds *dagSession) ECGetBatches(ctx context.Context, links []*format.Link, batchDataShards, batchIdx int, shardCh chan<- ec.Shard) (error, ec.Batch) {
+	defer close(shardCh)
 	vects := make([][]byte, len(links))
-	needCh := make(chan int, len(links)) // default RS(4,2) enable 1/3 shards broken
 	wg := sync.WaitGroup{}
 	wg.Add(len(links))
+
+	errCh := make(chan error, len(links))
 
 	for i, sh := range links {
 		go func(i int, sh *format.Link) {
 			defer wg.Done()
-			resultCh := make(chan []byte)
-			errCh := make(chan error)
-			go func() {
-				start := time.Now()
-				vect, err := ds.ECLink2Raw(ctx, sh, i, dShardNum)
-				if err != nil {
-					errCh <- err
-					return
-				}
-				fetchTime := time.Since(start)
-				shardType := "parity"
-				if i < dShardNum {
-					shardType = "data"
-				}
-				logger.Infof("use %s fetch %dth shard(%v) successfully, size:%d shard(%s)", fetchTime, i, shardType, len(vect), sh.Cid)
-				resultCh <- vect
-			}()
-			select {
-			case <-ctx.Done():
-				needCh <- i
-				logger.Errorf("cannot get %dth shard: timeout %v", i, timeout)
-			case vects[i] = <-resultCh:
+			start := time.Now()
+			vect, err := ds.ECLink2Raw(ctx, sh, i < batchDataShards)
+			if err != nil {
+				errCh <- err
 				return
-			case err := <-errCh:
-				needCh <- i
-				logger.Errorf("cannot get %dth shard: %s", i, err)
 			}
+			fetchTime := time.Since(start)
+			shardCh <- ec.Shard{Idx: i, RawData: vect}
+			vects[i] = vect
+			typ := "data"
+			if i >= batchDataShards {
+				typ = "parity"
+			}
+			logger.Infof("use %s fetch %d-batch-%d-shard(%s) %s successfully, size:%d", fetchTime, batchIdx, i, typ, sh.Cid, len(vect))
 		}(i, sh)
 	}
 	wg.Wait()
-	close(needCh)
-	needRepin := make([]int, 0, len(needCh))
-	for i := range needCh {
-		needRepin = append(needRepin, i)
+	close(errCh)
+	var errs error
+	for err := range errCh {
+		errs = errors.Join(errs, err)
 	}
-	sort.Ints(needRepin)
-	return vects[:dShardNum:dShardNum], vects[dShardNum:], needRepin, nil
+
+	return errs, ec.Batch{Idx: batchIdx, Shards: vects}
+}
+
+func (ds *dagSession) ECGetShardsAndRePin(ctx context.Context, ci api.Cid, d, p int, dShardSize []int, out chan<- ec.Batch) error {
+	timeout := 5 * time.Minute
+	links, err := ds.ResolveCborLinks(ctx, ci) // get sorted shards
+	if err != nil {
+		logger.Error(err)
+		return err
+	}
+
+	batchNum := (len(dShardSize) + d - 1) / d
+	errCh := make(chan error, batchNum)
+	wg := sync.WaitGroup{}
+	wg.Add(batchNum)
+
+	for i := 0; i < batchNum; i++ {
+		go func(i int) {
+			ctx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			defer wg.Done()
+			shardCh := make(chan ec.Shard, d)
+			batchResultCh := make(chan ec.Batch)
+			// split links to batch, links like [d0,d1,d2,d3,d4,p0,p1,p2,p3]
+			dl, dr := d*i, min((i+1)*d, len(dShardSize))
+			pl, pr := len(dShardSize)+i*p, len(dShardSize)+(i+1)*p
+			batchLinks := append(links[dl:dr:dr], links[pl:pr:pr]...)
+			// batchDataShardSize used to record
+			batchDataShardSize := dShardSize[dl:dr:dr]
+			go func() {
+				err, batch := ds.ECGetBatches(ctx, batchLinks, len(batchDataShardSize), i, shardCh)
+				if err != nil {
+					logger.Errorf("directly get %dbatch shards fail:%v", i, err)
+					return
+				}
+				batchResultCh <- batch
+			}()
+
+			go func() {
+				err, batch := ec.New(ctx, d, p, 0).BatchRecon(ctx, i, batchDataShardSize, shardCh)
+				if err != nil {
+					logger.Errorf("recon %dbatch shards fail:%v", i, err)
+					return
+				}
+				batchResultCh <- batch
+			}()
+
+			select {
+			case <-ctx.Done():
+				errCh <- fmt.Errorf("cannot get %dth batch: timeout %v", i, 5*time.Minute)
+			case batch := <-batchResultCh:
+				out <- batch
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	var errs error
+	for err := range errCh {
+		errs = errors.Join(errs, err)
+	}
+	return errs
 }
 
 // ResolveCborLinks get sorted block links
 func (ds *dagSession) ResolveCborLinks(ctx context.Context, shard api.Cid) ([]*format.Link, error) {
 	clusterDAGBlock, err := ds.blockGet(ctx, shard)
 	if err != nil {
-		return nil, fmt.Errorf("cluster pin(%s) was not stored: %s", shard, err)
+		return nil, fmt.Errorf("pin(%s) was not stored: %s", shard, err)
 	}
 	clusterDAGNode, err := sharding.CborDataToNode(clusterDAGBlock, "cbor")
 	if err != nil {
@@ -258,21 +288,22 @@ func (ds *dagSession) ResolveCborLinks(ctx context.Context, shard api.Cid) ([]*f
 		sh, _, err := clusterDAGNode.ResolveLink([]string{fmt.Sprintf("%d", i)})
 		if err != nil {
 			err = fmt.Errorf("cannot resolve %dst shard: %s", i, err)
-			errors.Join(errs, err)
 		}
+		errs = errors.Join(errs, err)
 		links = append(links, sh)
 	}
 	return links, errs
 }
 
 // convert shard to []byte
-func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, idx int, dShardNum int) ([]byte, error) {
-	if idx < dShardNum {
+func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, isData bool) ([]byte, error) {
+	if isData {
 		links, err := ds.ResolveCborLinks(ctx, api.NewCid(sh.Cid)) // get sorted shards
 		if err != nil {
 			return nil, fmt.Errorf("cannot resolve shard(%s): %s", sh.Cid, err)
 		}
 		vect := make([][]byte, len(links)) // estimate size
+		errCh := make(chan error, len(links))
 		wg := sync.WaitGroup{}
 		wg.Add(len(links))
 		for i, link := range links {
@@ -280,11 +311,19 @@ func (ds *dagSession) ECLink2Raw(ctx context.Context, sh *format.Link, idx int, 
 				defer wg.Done()
 				vect[i], err = ds.blockGet(ctx, ci)
 				if err != nil {
-					fmt.Printf("cannot fetch block(%s): %s\n", ci, err)
+					errCh <- err
 				}
 			}(i, api.NewCid(link.Cid))
 		}
 		wg.Wait()
+		close(errCh)
+		var errs error
+		for err := range errCh {
+			errs = errors.Join(errs, err)
+		}
+		if errs != nil {
+			return nil, errs
+		}
 		b := make([]byte, 0, len(vect)*len(vect[0]))
 		for _, v := range vect {
 			b = append(b, v...)
@@ -312,7 +351,7 @@ func (ds *dagSession) RemoveMany(ctx context.Context, cids []cid.Cid) error {
 }
 
 // https://github.com/ipfs/kubo/blob/a7c65184976e8717ac23d7efaa5b0d477ad15deb/core/commands/get.go#L93
-func fileArchive(f files.Node, name string, archive bool, out chan<- []byte) error {
+func fileArchive(f files.Node, name string, out chan<- []byte) error {
 	logger.Infof("archiving file %s", name)
 	defer close(out)
 	compression := gzip.NoCompression // compression seems only has little effect, so tar is used anyway as a transport format

@@ -304,7 +304,7 @@ CID: %s
 Name: %s
 ClusterDAG: %s
 Total shards: %d
-Total size: %s
+Total size: %d
 Total time: %s
 Ingest Rate: %s/s
 `
@@ -315,7 +315,8 @@ Ingest Rate: %s/s
 		dgs.addParams.Name,
 		clusterDAGPin,
 		len(dgs.shards),
-		humanize.Bytes(dgs.totalSize),
+		// humanize.Bytes(dgs.totalSize),
+		dgs.totalSize,
 		duration,
 		rate,
 	)

@@ -3,6 +3,7 @@ package adder
 import (
 	"context"
 	"errors"
+	"hash/fnv"
 	"sort"
 	"sync"
 
@@ -131,9 +132,13 @@ func BlockAllocate(ctx context.Context, rpc *rpc.Client, pinOpts api.PinOptions)
 	return allocsStr, err
 }
 
-// DefaultECAllocate choose one peer to send shard
-// more suitable for EC(4,2), and 3 peers
-func DefaultECAllocate(ctx context.Context, rpc *rpc.Client, dShards int, pShards int, idx int, isData bool) (peer.ID, error) {
+// DefaultECAllocate selects a peer to send a shard.
+// It uses a round-robin strategy to allocate shards to peers, use hash value sorts peers, and assigns different order of peers for data shards and parity shards.
+func DefaultECAllocate(ctx context.Context, rpc *rpc.Client, hashName string, d, p, idx int, isData bool) (peer.ID, error) {
+	if d <= 0 || p <= 0 || idx < 0 {
+		return "", errors.New("invalid input")
+	}
+
 	var peers []peer.ID
 	err := rpc.CallContext(
 		ctx,
@@ -146,33 +151,33 @@ func DefaultECAllocate(ctx context.Context, rpc *rpc.Client, dShards int, pShard
 	if err != nil {
 		return "", err
 	}
+
 	if len(peers) == 0 {
-		return "", errors.New("no peers")
+		return "", errors.New("error no peers")
 	}
+
 	if len(peers) == 1 {
 		return peers[0], nil
 	}
-	// Sort peers to ensure consistent allocation
-	sort.Slice(peers, func(i, j int) bool {
-		return peers[i].String() < peers[j].String()
-	})
 
-	// dPeerNum is the number of peers who store data shard, hopefully more than the number of parity peers.
-	var dPeerNum int
-	N := dShards + pShards
-	if dShards*len(peers)%N == 0 {
-		dPeerNum = dShards * len(peers) / N
-	} else {
-		dPeerNum = 1 + int(dShards*len(peers)/N)
-		if len(peers) == dPeerNum {
-			dPeerNum = len(peers) - 1
-		}
+	// Sort peers by hash
+	h := fnv.New32()
+	hashPeers := make(map[peer.ID]uint32)
+	for _, peer := range peers {
+		h.Reset()
+		h.Write([]byte(hashName + peer.String()))
+		hashPeers[peer] = h.Sum32()
 	}
-	pPeerNum := len(peers) - dPeerNum
+	sort.Slice(peers, func(i, j int) bool {
+		return hashPeers[peers[i]] < hashPeers[peers[j]]
+	})
+	// Choose the peer based on hash, either in positive or reverse order
+	i := idx % len(peers)
 	if isData {
-		return peers[idx%dPeerNum], nil
+		i = len(peers) - i - 1
 	}
-	return peers[dPeerNum+idx%pPeerNum], nil
+
+	return peers[i], nil
 }
 
 // ErasurePin helps sending local and remote RPC pin requests.(by setting dest and enable the promission of RPC Call)

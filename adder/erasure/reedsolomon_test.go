@@ -4,12 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"strings"
+	"testing"
+
 	"github.com/ipfs-cluster/ipfs-cluster/adder/ipfsadd"
 	"github.com/ipfs-cluster/ipfs-cluster/test"
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/multiformats/go-multihash"
-	"strings"
-	"testing"
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs/boxo/files"
@@ -102,13 +103,32 @@ func SplitAndRecon(t *testing.T, dgs ipld.DAGService, file files.Node, shardSize
 	for i, vect := range dataVects {
 		dShardSize[i] = len(vect)
 	}
-	preData0 := make([]byte, len(dataVects[0]))
-	copy(preData0, dataVects[0])
-	dataVects[0] = nil
-	dataVects[3] = nil
-	err = rs.SplitAndRecon(dataVects, parityVects, dShardSize)
-	assert.Nil(t, err)
-	assert.Equal(t, preData0, dataVects[0])
+	batchNum := (len(dataVects) + rs.dataShards - 1) / rs.dataShards
+	for i := 0; i < batchNum; i++ {
+		preData0 := make([]byte, len(dataVects[i*rs.dataShards]))
+		copy(preData0, dataVects[i*rs.dataShards])
+		dataVects[i*rs.dataShards] = nil
+		shardCh := make(chan Shard, 6)
+		dl := i * rs.dataShards
+		dr := min((i+1)*rs.dataShards, len(dShardSize))
+		pl := i * rs.parityShards
+		pr := (i + 1) * rs.parityShards
+		batchDataShards := dr - dl
+		go func(i int) {
+			defer close(shardCh)
+			for j := dl; j < dr; j++ {
+				fmt.Printf("send data shard:%d, len(%d)\n", j-dl, len(dataVects[j]))
+				shardCh <- Shard{Idx: j - dl, RawData: dataVects[j]}
+			}
+			for j := pl; j < pr; j++ {
+				fmt.Printf("send parity shard:%d, len(%d)\n", j-pl+batchDataShards, len(parityVects[j]))
+				shardCh <- Shard{Idx: j - pl + batchDataShards, RawData: parityVects[j]}
+			}
+		}(i)
+		err, batch := rs.BatchRecon(context.Background(), i, dShardSize[dl:dr], shardCh)
+		assert.Nil(t, err)
+		assert.Equal(t, preData0, batch.Shards[0])
+	}
 }
 
 func NewRandFile(fileSize int) files.Node {

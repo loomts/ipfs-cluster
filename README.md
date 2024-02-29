@@ -8,7 +8,7 @@ IPFS-Cluster is a good project for data orchestration on IPFS. But it does not s
 ### Overview
 This work can be divided into three parts.
 1. Data Addition: First is obtain data. Since data can only be accessed once, use `DAGService.Get` get the block data and send it to Erasure module during MerkleDAG traversal. Once Erasure module receives enough data shards, it use ReedSolomon encodes parity shards and send them to `adder`. Then adder reuses `single/dag_service` add them to IPFS as several individual files.
-2. Shard Allocation: We need to decide which nodes are suitable to each shard. The implementation ensures that large number of peers store the data shards, and more than one peer stores the parity shards. And each shard **only** will store by one peer when added(but allocation may change when shard broken and recovery). See `DefaultECAllocate` for details. After determining allocation of shards, we use the RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to pin **remotely** or locally. 
+2. Shard Allocation: We need to decide which nodes are suitable to each shard. The implementation ensures that each shard **only** will store by one peer when added(but allocation may change when shard broken and recovery), and each peer of IPFS have same change to store data or parity. See `DefaultECAllocate` for details. After determining allocation of shards, we use the RPC Call `IPFSConnector.BlockStream` to send blocks, and `Cluster.Pin` to pin **remotely** or locally. 
 3. Data Recovery: We use `clusterPin` store the cid of data and parity shards as well as the size of data shards. During reconstruction, we set one minute as timeout and attempt to retrieve data and parity shards separately. If some shards are broken, we finally use ReedSolomon module to reconstruct and repin the file. **However, ReedSolomon has a limit**, only the sum of the number of existing data shards and party shards needs to greater than total data shards, can we reconstruct all data shards and piece together the complete data.
 
 ### Usage
@@ -50,7 +50,7 @@ dctltest() {
   make cmd/ipfs-cluster-ctl
   docker build -t ipfs-cluster-erasure -f Dockerfile-erasure .
   docker-compose -f docker-compose-erasure.yml up -d
-  sleep 5
+  sleep 10
 
   # QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ is the cid of tmpfile
   ci="QmSxdRX48W7PeS4uNEmhcx4tAHt7rzjHWBwLHetefZ9AvJ"

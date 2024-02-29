@@ -2402,58 +2402,61 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 	if err != nil {
 		return api.Pin{}, fmt.Errorf("cannot extra erasure coding metadata: %s", err)
 	}
-	dataVects, parityVects, needRepin, err := dgs.ECGetShards(ctx, clusterPin.Cid, len(dShardSize))
+	d, p := clusterPin.DataShards, clusterPin.ParityShards
+	batchNum := (len(dShardSize) + d - 1) / d
+	batchCh := make(chan ec.Batch, batchNum)
+	var errs error
+	var wg sync.WaitGroup
+	wg.Add(batchNum)
+	go func() {
+		for i := 0; i < batchNum; i++ {
+			batch := <-batchCh
+			go func() {
+				defer wg.Done()
+				err := c.ECRePinBatch(ctx, batch, clusterPin, blockMeta, dShardSize[batch.Idx*d:min((batch.Idx+1)*d, len(dShardSize))])
+				errs = errors.Join(errs, err)
+			}()
+		}
+	}()
+	err = dgs.ECGetShardsAndRePin(ctx, clusterPin.Cid, d, p, dShardSize, batchCh)
+	err = errors.Join(err, errs)
 	if err != nil {
 		return api.Pin{}, err
 	}
-	dgs.SetCache(dataVects, blockMeta)
-	if len(needRepin) > 0 {
-		err = ec.New(ctx, clusterPin.DataShards, clusterPin.ParityShards, 0).SplitAndRecon(dataVects, parityVects, dShardSize)
-		if err != nil {
-			return api.Pin{}, err
-		}
-		logger.Infof("reconstruct %s success, recover %d shards, repinning %v", rootPin.Cid, len(needRepin), needRepin)
-		err = c.ECPutShards(ctx, dataVects, parityVects, needRepin, clusterPin, blockMeta, dShardSize)
-		if err != nil {
-			return api.Pin{}, err
-		}
-		return c.PinGet(ctx, root)
-	}
-	logger.Infof("%s not need to reconstruct", root)
+	wg.Wait()
 	return rootPin, nil
 }
 
 // drop previous pin's allocation, cover by new allocation
-func (c *Cluster) ECPutShards(ctx context.Context, dataVects [][]byte, parityVects [][]byte, needRepin []int, clusterPin api.Pin, blockMeta map[int][]sharding.ECBlockMeta, dShardSize []int) error {
-	ctx, span := trace.StartSpan(ctx, "cluster/BlockPut")
-	defer span.End()
+func (c *Cluster) ECRePinBatch(ctx context.Context, batch ec.Batch, clusterPin api.Pin, blockMeta map[int][]sharding.ECBlockMeta, dShardSize []int) error {
+	if len(batch.NeedRepin) == 0 {
+		return nil
+	}
 	var wg sync.WaitGroup
-	wg.Add(len(needRepin))
-	errCh := make(chan error, len(needRepin))
+	wg.Add(len(batch.NeedRepin))
+	errCh := make(chan error, len(batch.NeedRepin))
 
-	for _, idx := range needRepin {
+	for _, idx := range batch.NeedRepin {
 		go func(idx int) {
 			defer wg.Done()
 			// both data and parity idx should start from 0
-			var shard []byte
 			isData := true
+			shard := batch.Shards[idx]
 			if idx >= len(dShardSize) {
 				idx -= len(dShardSize)
 				isData = false
-				shard = parityVects[idx]
-			} else {
-				shard = dataVects[idx]
 			}
-
-			p, err := adder.DefaultECAllocate(ctx, c.rpcClient, clusterPin.DataShards, clusterPin.ParityShards, idx, isData)
+			fileName := clusterPin.Name[:len(clusterPin.Name)-len("-clusterDAG")]
+			d, p := clusterPin.DataShards, clusterPin.ParityShards
+			peer, err := adder.DefaultECAllocate(ctx, c.rpcClient, fileName, d, p, idx, isData)
 			if err != nil {
 				errCh <- err
 				return
 			}
 			if isData {
-				err = c.repinDataShard(ctx, shard, p, blockMeta[idx], clusterPin)
+				err = c.repinDataShard(ctx, shard, peer, blockMeta[batch.Idx*d+idx], clusterPin)
 			} else {
-				err = c.repinParityShard(ctx, shard, p, clusterPin, idx)
+				err = c.repinParityShard(ctx, shard, peer, clusterPin, batch.Idx*p+idx)
 			}
 			if err != nil {
 				errCh <- err
@@ -2511,7 +2514,7 @@ func (c *Cluster) repinDataShard(ctx context.Context, shard []byte, p peer.ID, b
 			}
 			newCi, err := ci.Prefix().Sum(raw)
 			if newCi != ci {
-				errCh <- fmt.Errorf("ECPutShards error, new block's cid(%s) not equal to prev(%s)", newCi, ci)
+				errCh <- fmt.Errorf("repinDataShard error, new block's cid(%s) not equal to prev(%s)", newCi, ci)
 				return
 			}
 			blockCh <- api.NodeWithMeta{
@@ -2522,7 +2525,7 @@ func (c *Cluster) repinDataShard(ctx context.Context, shard []byte, p peer.ID, b
 			shard = shard[m.Size:]
 		}
 		if len(shard) != 0 {
-			errCh <- fmt.Errorf("ECPutShards error, invalid recovery shard size")
+			errCh <- fmt.Errorf("repinDataShard error, invalid recovery shard size")
 			return
 		}
 		nodes, err := sharding.MakeDAG(ctx, dagNode)

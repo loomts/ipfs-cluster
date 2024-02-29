@@ -669,12 +669,12 @@ func (c *defaultClient) Add(
 		addFiles[i] = files.FileEntry(name, addFile)
 	}
 	if params.Erasure && params.ShardSize == 1024*1024*100 {
-		// if shard size is default 100MB estimate shard size to fit RS encode shard size
-		extraMetaSize := sum / 5120 // 5MB rawdata make 1KB meta
+		// if shard size is default 100MB, estimate shard size to fit RS encode shard size
+		extraMetaSize := sum / 5120 // 5MB rawdata make 1KB Merkle DAG meta
 		sum += extraMetaSize
 		params.ShardSize = sum/uint64(params.DataShards) + 256*1024
-		for params.ShardSize*uint64(params.DataShards) > 400*1024*1024 {
-			// if data shards' size larger than 400MB, means that need 400MB to RS encode, split it.
+		for params.ShardSize*uint64(params.DataShards) > 1024*1024*1024 {
+			// if data shards' size larger than 1GB, means that need 400MB to RS encode, split it.
 			params.ShardSize /= 2
 		}
 	}

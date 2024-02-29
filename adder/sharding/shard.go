@@ -65,7 +65,7 @@ func newShard(globalCtx context.Context, ctx context.Context, rpc *rpc.Client, o
 	allocs, err := adder.BlockAllocate(ctx, rpc, opts)
 	if erasure {
 		// select one peer to send shard
-		allocation, err := adder.DefaultECAllocate(ctx, rpc, opts.DataShards, opts.ParityShards, idx, true)
+		allocation, err := adder.DefaultECAllocate(ctx, rpc, opts.Name, opts.DataShards, opts.ParityShards, idx, true)
 		if err != nil {
 			return nil, fmt.Errorf("shardsAllocate %d: %s", idx, err)
 		}
