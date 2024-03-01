@@ -175,7 +175,6 @@ func (ds *dagSession) ECGetBatches(ctx context.Context, links []*format.Link, ba
 	vects := make([][]byte, len(links))
 	wg := sync.WaitGroup{}
 	wg.Add(len(links))
-
 	errCh := make(chan error, len(links))
 
 	for i, sh := range links {
@@ -207,7 +206,7 @@ func (ds *dagSession) ECGetBatches(ctx context.Context, links []*format.Link, ba
 	return errs, ec.Batch{Idx: batchIdx, Shards: vects}
 }
 
-func (ds *dagSession) ECGetShardsAndRePin(ctx context.Context, ci api.Cid, d, p int, dShardSize []int, out chan<- ec.Batch) error {
+func (ds *dagSession) ECGetShard2Batch(ctx context.Context, ci api.Cid, d, p int, dShardSize []int, out chan<- ec.Batch) error {
 	timeout := 5 * time.Minute
 	links, err := ds.ResolveCborLinks(ctx, ci) // get sorted shards
 	if err != nil {
@@ -221,7 +220,7 @@ func (ds *dagSession) ECGetShardsAndRePin(ctx context.Context, ci api.Cid, d, p 
 	wg.Add(batchNum)
 
 	for i := 0; i < batchNum; i++ {
-		go func(i int) {
+		func(i int) {
 			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			defer wg.Done()
@@ -272,7 +271,7 @@ func (ds *dagSession) ECGetShardsAndRePin(ctx context.Context, ci api.Cid, d, p 
 func (ds *dagSession) ResolveCborLinks(ctx context.Context, shard api.Cid) ([]*format.Link, error) {
 	clusterDAGBlock, err := ds.blockGet(ctx, shard)
 	if err != nil {
-		return nil, fmt.Errorf("pin(%s) was not stored: %s", shard, err)
+		return nil, err
 	}
 	clusterDAGNode, err := sharding.CborDataToNode(clusterDAGBlock, "cbor")
 	if err != nil {

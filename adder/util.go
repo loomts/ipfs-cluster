@@ -172,12 +172,16 @@ func DefaultECAllocate(ctx context.Context, rpc *rpc.Client, hashName string, d,
 		return hashPeers[peers[i]] < hashPeers[peers[j]]
 	})
 	// Choose the peer based on hash, either in positive or reverse order
-	i := idx % len(peers)
-	if isData {
-		i = len(peers) - i - 1
+	dNum := d * len(peers) / (d + p)
+	if d*len(peers)%(d+p) != 0 && dNum < len(peers)-1 {
+		dNum += 1
 	}
-
-	return peers[i], nil
+	dPeers := peers[:dNum:dNum]
+	pPeers := peers[dNum:]
+	if isData {
+		return dPeers[idx%len(dPeers)], nil
+	}
+	return pPeers[idx%len(pPeers)], nil
 }
 
 // ErasurePin helps sending local and remote RPC pin requests.(by setting dest and enable the promission of RPC Call)

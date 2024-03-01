@@ -8,7 +8,6 @@ import (
 	"mime/multipart"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -2407,21 +2406,19 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 	batchCh := make(chan ec.Batch, batchNum)
 	var errs error
 	var wg sync.WaitGroup
-	wg.Add(batchNum)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for i := 0; i < batchNum; i++ {
 			batch := <-batchCh
-			go func() {
-				defer wg.Done()
-				err := c.ECRePinBatch(ctx, batch, clusterPin, blockMeta, dShardSize[batch.Idx*d:min((batch.Idx+1)*d, len(dShardSize))])
-				errs = errors.Join(errs, err)
-			}()
+			err := c.ECRePinBatch(ctx, batch, clusterPin, blockMeta, dShardSize[batch.Idx*d:min((batch.Idx+1)*d, len(dShardSize))])
+			errs = errors.Join(errs, err)
 		}
 	}()
-	err = dgs.ECGetShardsAndRePin(ctx, clusterPin.Cid, d, p, dShardSize, batchCh)
-	err = errors.Join(err, errs)
-	if err != nil {
-		return api.Pin{}, err
+	err = dgs.ECGetShard2Batch(ctx, clusterPin.Cid, d, p, dShardSize, batchCh)
+	errs = errors.Join(errs, err)
+	if errs != nil {
+		return api.Pin{}, errs
 	}
 	wg.Wait()
 	return rootPin, nil
@@ -2448,15 +2445,19 @@ func (c *Cluster) ECRePinBatch(ctx context.Context, batch ec.Batch, clusterPin a
 			}
 			fileName := clusterPin.Name[:len(clusterPin.Name)-len("-clusterDAG")]
 			d, p := clusterPin.DataShards, clusterPin.ParityShards
-			peer, err := adder.DefaultECAllocate(ctx, c.rpcClient, fileName, d, p, idx, isData)
+			pee, err := adder.DefaultECAllocate(ctx, c.rpcClient, fileName, d, p, idx, isData)
 			if err != nil {
 				errCh <- err
 				return
 			}
+			opts := clusterPin.PinOptions
+			opts.UserAllocations = []peer.ID{pee}
 			if isData {
-				err = c.repinDataShard(ctx, shard, peer, blockMeta[batch.Idx*d+idx], clusterPin)
+				opts.Name = fileName + "-shard-" + fmt.Sprintf("%d", batch.Idx*d+idx)
+				err = c.repinDataShard(ctx, shard, blockMeta[batch.Idx*d+idx], opts)
 			} else {
-				err = c.repinParityShard(ctx, shard, peer, clusterPin, batch.Idx*p+idx)
+				opts.Name = fileName + "-parity-shard-" + fmt.Sprintf("%d", batch.Idx*p+idx)
+				err = c.repinParityShard(ctx, shard, opts)
 			}
 			if err != nil {
 				errCh <- err
@@ -2465,24 +2466,21 @@ func (c *Cluster) ECRePinBatch(ctx context.Context, batch ec.Batch, clusterPin a
 	}
 	wg.Wait()
 	close(errCh)
-	var errs []error
+	var errs error
 	for err := range errCh {
-		errs = append(errs, err)
+		errs = errors.Join(errs, err)
 	}
-	return multierr.Combine(errs...)
+	return errs
 }
 
 // repinParityShard handles the repinning of a parity shard.
-func (c *Cluster) repinParityShard(ctx context.Context, shard []byte, p peer.ID, clusterPin api.Pin, idx int) error {
+func (c *Cluster) repinParityShard(ctx context.Context, shard []byte, opts api.PinOptions) error {
 	parityAddParams := api.DefaultAddParams()
 	parityAddParams.RawLeaves = true
-	if !strings.HasSuffix(clusterPin.Name, "clusterDAG") {
-		return fmt.Errorf("invalid clusterPin.Name: %s", clusterPin.Name)
-	}
-	parityAddParams.Name = clusterPin.Name[:len(clusterPin.Name)-len("clusterDAG")] + fmt.Sprintf("parity-shard-%d", idx)
+	parityAddParams.Name = opts.Name
 	parityAddParams.ReplicationFactorMin = 1
 	parityAddParams.ReplicationFactorMax = 1
-	parityAddParams.UserAllocations = []peer.ID{p}
+	parityAddParams.UserAllocations = []peer.ID{opts.UserAllocations[0]}
 	mapDir := files.NewMapDirectory(map[string]files.Node{parityAddParams.Name: files.NewBytesFile(shard)})
 	r := files.NewMultiFileReader(mapDir, true, false)
 	mr := multipart.NewReader(r, r.Boundary())
@@ -2490,12 +2488,12 @@ func (c *Cluster) repinParityShard(ctx context.Context, shard []byte, p peer.ID,
 	if err != nil {
 		return err
 	}
-	logger.Infof("repin parity shard(%s) allocation to %v", ci, p)
+	logger.Infof("repin parity shard(%s) allocation to %v", ci, opts.UserAllocations[0])
 	return nil
 }
 
 // repinDataShard handles the repinning of a data shard.
-func (c *Cluster) repinDataShard(ctx context.Context, shard []byte, p peer.ID, bmeta []sharding.ECBlockMeta, clusterPin api.Pin) error {
+func (c *Cluster) repinDataShard(ctx context.Context, shard []byte, bmeta []sharding.ECBlockMeta, opts api.PinOptions) error {
 	blockCh := make(chan api.NodeWithMeta, 1024)
 	dagNode := make(map[string]cid.Cid)
 
@@ -2507,11 +2505,11 @@ func (c *Cluster) repinDataShard(ctx context.Context, shard []byte, p peer.ID, b
 		for _, m := range bmeta {
 			raw := shard[:m.Size:m.Size]
 			ci, err := cid.Decode(m.Cid)
-			dagNode[fmt.Sprintf("%d", m.BlockNo)] = ci
 			if err != nil {
 				errCh <- err
 				return
 			}
+			dagNode[fmt.Sprintf("%d", m.BlockNo)] = ci
 			newCi, err := ci.Prefix().Sum(raw)
 			if newCi != ci {
 				errCh <- fmt.Errorf("repinDataShard error, new block's cid(%s) not equal to prev(%s)", newCi, ci)
@@ -2543,7 +2541,7 @@ func (c *Cluster) repinDataShard(ctx context.Context, shard []byte, p peer.ID, b
 		}
 	}()
 
-	bs := adder.NewBlockStreamer(c.ctx, c.rpcClient, []peer.ID{p}, blockCh)
+	bs := adder.NewBlockStreamer(c.ctx, c.rpcClient, []peer.ID{opts.UserAllocations[0]}, blockCh)
 	select {
 	case <-ctx.Done():
 		return <-errCh
@@ -2551,18 +2549,19 @@ func (c *Cluster) repinDataShard(ctx context.Context, shard []byte, p peer.ID, b
 		close(errCh)
 	}
 	if err := bs.Err(); err != nil {
+		logger.Errorf("repinDataShard error:%v", err)
 		return err
 	}
 	if err := <-errCh; err != nil {
+		logger.Errorf("repinDataShard error:%v", err)
 		return err
 	}
 	// update shard pin allocation
-	opts := clusterPin.PinOptions
-	opts.UserAllocations = []peer.ID{p}
 	_, err := c.PinUpdate(ctx, api.NewCid(shardCid), api.NewCid(shardCid), opts)
 	if err != nil {
+		logger.Errorf("repinDataShard PinUpdate error:%v", err)
 		return err
 	}
-	logger.Infof("repin data shard(%s) allocation to %v", shardCid, p)
+	logger.Infof("repin data shard(%s) allocation to %v", shardCid, opts.UserAllocations[0])
 	return nil
 }
