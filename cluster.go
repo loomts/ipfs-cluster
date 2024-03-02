@@ -2481,8 +2481,9 @@ func (c *Cluster) repinParityShard(ctx context.Context, shard []byte, opts api.P
 	parityAddParams.ReplicationFactorMin = 1
 	parityAddParams.ReplicationFactorMax = 1
 	parityAddParams.UserAllocations = []peer.ID{opts.UserAllocations[0]}
-	mapDir := files.NewMapDirectory(map[string]files.Node{parityAddParams.Name: files.NewBytesFile(shard)})
-	r := files.NewMultiFileReader(mapDir, true, false)
+	parityFile := files.FileEntry(parityAddParams.Name, files.NewBytesFile(shard))
+	f := files.NewSliceDirectory([]files.DirEntry{parityFile})
+	r := files.NewMultiFileReader(f, true, false)
 	mr := multipart.NewReader(r, r.Boundary())
 	ci, err := c.AddFile(ctx, mr, parityAddParams)
 	if err != nil {
