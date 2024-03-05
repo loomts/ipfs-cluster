@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -243,6 +244,7 @@ func (r *ReedSolomon) BatchRecon(ctx context.Context, batchIdx int, batchDataSha
 			batch[shard.Idx] = shard.RawData
 
 			if receShards >= batchDataShards {
+				start := time.Now()
 				// create new slices, avoid disrupting the original array
 				vects := make([][]byte, len(batch))
 				for i := 0; i < len(vects); i++ {
@@ -261,16 +263,17 @@ func (r *ReedSolomon) BatchRecon(ctx context.Context, batchIdx int, batchDataSha
 					log.Errorf("reconstruct shards[%d~%d] error:%v", batchIdx*r.dataShards, batchIdx*r.dataShards+len(batchDataShardSize), err)
 					return fmt.Errorf("%d batch err:%s", batchIdx, err), Batch{}
 				}
-
+				sum := 0
 				// remove appended 0
 				for j := 0; j < len(vects); j++ {
 					if j < batchDataShards {
 						vects[j] = vects[j][:batchDataShardSize[j]:batchDataShardSize[j]]
+						sum += len(vects[j])
 					} else if j < r.dataShards {
 						vects[j] = nil
 					}
 				}
-
+				log.Errorf("1111111111111111batch %d reconstruct time:%v, len:%v, rate:%v\n", batchIdx, time.Since(start), sum, float64(sum)/float64(time.Since(start).Seconds()))
 				return nil, Batch{Idx: batchIdx, NeedRepin: needRepin, Shards: vects}
 			}
 		}

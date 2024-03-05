@@ -2328,7 +2328,7 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 	for p := range pins {
 		if p.Type == api.ClusterDAGType && len(p.Metadata) > 0 {
 			wg.Add(1)
-			go func(ci api.Cid) {
+			func(ci api.Cid) {
 				defer wg.Done()
 				pin, err := c.ECReConstruct(ctx, ci, dgs)
 				out <- pin
@@ -2401,16 +2401,27 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 	if err != nil {
 		return api.Pin{}, fmt.Errorf("cannot extra erasure coding metadata: %s", err)
 	}
+	sum, repin := 0, 0
 	d, p := clusterPin.DataShards, clusterPin.ParityShards
 	batchNum := (len(dShardSize) + d - 1) / d
 	batchCh := make(chan ec.Batch, batchNum)
+	start := time.Now()
+	retrieveSeconds := float64(0)
 	var errs error
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for i := 0; i < batchNum; i++ {
+			st := time.Now()
 			batch := <-batchCh
+			for _, shard := range batch.Shards {
+				sum += len(shard)
+			}
+			for _, j := range batch.NeedRepin {
+				repin += len(batch.Shards[j])
+			}
+			retrieveSeconds += float64(time.Since(st).Seconds())
 			err := c.ECRePinBatch(ctx, batch, clusterPin, blockMeta, dShardSize[batch.Idx*d:min((batch.Idx+1)*d, len(dShardSize))])
 			errs = errors.Join(errs, err)
 		}
@@ -2421,6 +2432,9 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 		return api.Pin{}, errs
 	}
 	wg.Wait()
+	total := float64(time.Since(start).Seconds())
+	reconSeconds := total - retrieveSeconds
+	logger.Errorf("==================== ECReConstruct %s cost %d seconds, getdataSecond:%v, repinSecond:%v, sum:%v, data:%v, repin:%v allrate:%v, getdataRate:%v, repinrate:%v\n", root, total, retrieveSeconds, reconSeconds, sum, sum-repin, repin, float64(sum)/total, float64(sum-repin)/retrieveSeconds, float64(repin)/reconSeconds)
 	return rootPin, nil
 }
 
