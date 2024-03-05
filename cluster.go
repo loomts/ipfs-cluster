@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -2325,19 +2326,34 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 	}
 	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
 	wg := sync.WaitGroup{}
+	sortPins := make([]api.Pin, 0)
 	for p := range pins {
 		if p.Type == api.ClusterDAGType && len(p.Metadata) > 0 {
-			wg.Add(1)
-			func(ci api.Cid) {
-				defer wg.Done()
-				pin, err := c.ECReConstruct(ctx, ci, dgs)
-				out <- pin
-				if err != nil {
-					logger.Errorf("ReConstruct %s error:%s", ci, err)
-					return
-				}
-			}(*p.Reference)
+			sortPins = append(sortPins, p)
 		}
+	}
+	sort.Slice(sortPins, func(i, j int) bool {
+		parts := strings.Split(sortPins[i].Name, "-")
+		num := strings.TrimPrefix(parts[0], "File")
+		iNum, _ := strconv.Atoi(num)
+
+		parts = strings.Split(sortPins[j].Name, "-")
+		num = strings.TrimPrefix(parts[0], "File")
+		jNum, _ := strconv.Atoi(num)
+
+		return iNum < jNum
+	})
+	for _, p := range sortPins {
+		wg.Add(1)
+		func(ci api.Cid) {
+			defer wg.Done()
+			pin, err := c.ECReConstruct(ctx, ci, dgs)
+			out <- pin
+			if err != nil {
+				logger.Errorf("ReConstruct %s error:%s", ci, err)
+				return
+			}
+		}(*p.Reference)
 	}
 	wg.Wait()
 	return nil
@@ -2434,7 +2450,7 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 	wg.Wait()
 	total := float64(time.Since(start).Seconds())
 	reconSeconds := total - retrieveSeconds
-	logger.Errorf("==================== ECReConstruct %s cost %d seconds, getdataSecond:%v, repinSecond:%v, sum:%v, data:%v, repin:%v allrate:%v, getdataRate:%v, repinrate:%v\n", root, total, retrieveSeconds, reconSeconds, sum, sum-repin, repin, float64(sum)/total, float64(sum-repin)/retrieveSeconds, float64(repin)/reconSeconds)
+	logger.Errorf("==================== ECReConstruct %v cost %v seconds, getdataSecond:%v, repinSecond:%v, sum:%v, data:%v, repin:%v allrate:%v, getdataRate:%v, repinrate:%v\n", root, total, retrieveSeconds, reconSeconds, sum, sum-repin, repin, float64(sum)/total, float64(sum-repin)/retrieveSeconds, float64(repin)/reconSeconds)
 	return rootPin, nil
 }
 
