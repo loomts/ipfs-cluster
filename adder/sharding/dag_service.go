@@ -157,13 +157,12 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	clusterDAGPin.Type = api.ClusterDAGType
 	clusterDAGPin.Reference = &dataRoot
 	dataShardSize := dgs.rs.GetDataShardSize()
+	logger.Errorf("+++++++ datashardsize %v:%v", dataRoot.Cid, dataShardSize)
 	// record data shard size to metadata, enable erasure module know data size and the number.
 	for i, size := range dataShardSize {
-		logger.Debug(i, size)
 		clusterDAGPin.Metadata[i] = fmt.Sprintf("%d", size)
 	}
 	for _, bmeta := range dgs.blockMeta {
-		logger.Debug(bmeta)
 		clusterDAGPin.Metadata[bmeta.String()] = ""
 	}
 	// Update object with response.
@@ -240,7 +239,7 @@ func (dgs *DAGService) ingestBlock(ctx context.Context, n ipld.Node) error {
 	// this is not same as n.Size()
 	size := uint64(len(n.RawData()))
 	// add the block to it if it fits and return
-	if shard.Size()+size < shard.Limit() {
+	if shard.Size()+size <= shard.Limit() {
 		if dgs.addParams.Erasure {
 			dgs.rs.SendBlockTo() <- ec.StatBlock{Node: n, Stat: ec.DefaultBlock}
 			// record block metadata

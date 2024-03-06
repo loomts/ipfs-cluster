@@ -42,6 +42,7 @@ type DAGService struct {
 	blocks          []chan api.NodeWithMeta
 	closeBlocksOnce []sync.Once
 	fileIdx         int // parity shard index, only used when enable erasure code
+	total           uint64
 }
 
 // New returns a new Adder with the given rpc Client. The client is used
@@ -69,6 +70,7 @@ func (dgs *DAGService) Add(ctx context.Context, node ipld.Node) error {
 	if dgs.recentBlocks.Has(node) {
 		return nil
 	}
+	dgs.total += uint64(len(node.RawData()))
 
 	// FIXME: can't this happen on initialization?  Perhaps the point here
 	// is the adder only allocates and starts streaming when the first
@@ -145,6 +147,8 @@ func (dgs *DAGService) CloseI(i int) {
 
 // Finalize pins the last Cid added to this DAGService.
 func (dgs *DAGService) Finalize(ctx context.Context, root api.Cid) (api.Cid, error) {
+	logger.Errorf("------- %s size: %v", root, dgs.total)
+	dgs.total = 0
 	// Close current blocks channel
 	dgs.CloseI(dgs.fileIdx)
 	// Wait for the BlockStreamer to finish.

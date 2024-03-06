@@ -233,35 +233,29 @@ func (ds *dagSession) ECGetShard2Batch(ctx context.Context, ci api.Cid, d, p int
 			// batchDataShardSize used to record
 			batchDataShardSize := dShardSize[dl:dr:dr]
 			go func() {
-				start := time.Now()
 				err, batch := ds.ECGetBatches(ctx, batchLinks, len(batchDataShardSize), i, shardCh)
 				if err != nil {
 					logger.Errorf("directly get %dbatch shards fail:%v", i, err)
 					return
 				}
 				batchResultCh <- batch
-				duration := float64(time.Since(start).Seconds())
 				total := 0
 				for _, shard := range batch.Shards {
 					total += len(shard)
 				}
-				logger.Errorf("------------ directly get %dbatch shards len:%d successfully, duration:%v, rate: %v\n", i, total, duration, float64(total)/duration)
 			}()
 
 			go func() {
-				start := time.Now()
 				err, batch := ec.New(ctx, d, p, 0).BatchRecon(ctx, i, batchDataShardSize, shardCh)
 				if err != nil {
 					logger.Errorf("recon %dbatch shards fail:%v", i, err)
 					return
 				}
 				batchResultCh <- batch
-				duration := float64(time.Since(start).Seconds())
 				total := 0
 				for _, shard := range batch.Shards {
 					total += len(shard)
 				}
-				logger.Errorf("00000000000000 recon get %dbatch shards len:%d successfully, duration:%v, rate: %v\n", i, total, duration, float64(total)/duration)
 			}()
 
 			select {
