@@ -13,7 +13,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/ipfs-cluster/ipfs-cluster/api"
-	dag "github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log/v2"
@@ -100,45 +99,32 @@ func New(ctx context.Context, d int, p int, shardSize int) *ReedSolomon {
 // handleBlock handle block from dag_service
 func (r *ReedSolomon) handleBlock() {
 	for {
-		sb := <-r.blockCh
-		switch sb.Stat {
+		blk := <-r.blockCh
+		r.mu.Lock()
+		switch blk.Stat {
 		case DefaultBlock:
-			r.mu.Lock()
-			nd := sb.Node
-			var nb ipld.Node
-			switch nd.(type) {
-			case *dag.ProtoNode:
-				nb = nd.(*dag.ProtoNode)
-			case *dag.RawNode:
-				nb = nd.(*dag.RawNode)
-			default:
-				log.Errorf("unknown node type:%v", nd)
-			}
-			b := nb.RawData()
+			b := blk.RawData()
 			if r.curShardJ+len(b) <= r.shardSize {
 				r.blocks[r.curShardI] = append(r.blocks[r.curShardI], b...)
 				r.curShardJ += len(b)
 			} else {
 				log.Errorf("unreachable code, block size:%d, curShardJ:%d, shardSize:%d", len(b), r.curShardJ, r.shardSize)
 			}
-			r.mu.Unlock()
 		case ShardEndBlock:
-			r.mu.Lock()
 			// fill with 0 to alignL this data shard
 			r.dataShardSize[fmt.Sprintf("%d", r.dataLen)] = uint64(len(r.blocks[r.curShardI]))
 			r.dataLen += 1
-			r.batchCid[r.curShardI] = sb.Cid
+			r.batchCid[r.curShardI] = blk.Cid
 			r.curShardI, r.curShardJ = r.curShardI+1, 0
 			if r.curShardI == r.dataShards {
 				r.EncodeL(false)
 			}
-			r.mu.Unlock()
 		case FileEndBlock:
-			r.mu.Lock()
 			r.EncodeL(true)
 			r.mu.Unlock()
 			return
 		}
+		r.mu.Unlock()
 	}
 }
 
@@ -232,7 +218,7 @@ func (r *ReedSolomon) BatchRecon(ctx context.Context, batchIdx int, batchDataSha
 			return fmt.Errorf("%d batch err:%s", batchIdx, ctx.Err()), Batch{}
 		case shard := <-shardCh:
 			if len(shard.RawData) == 0 {
-				log.Infof("BatchRecon receive invalid shard")
+				log.Infof("BatchRecon received invalid shard")
 				continue
 			}
 			receShards++
