@@ -2450,7 +2450,7 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 	wg.Wait()
 	total := float64(time.Since(start).Seconds())
 	reconSeconds := total - retrieveSeconds
-	logger.Errorf("==================== ECReConstruct %v cost %v seconds, getdataSecond:%v, repinSecond:%v, sum:%v, data:%v, repin:%v allrate:%v, getdataRate:%v, repinrate:%v\n", root, total, retrieveSeconds, reconSeconds, sum, sum-repin, repin, float64(sum)/total, float64(sum-repin)/retrieveSeconds, float64(repin)/reconSeconds)
+	logger.Errorf("==================== ECReConstruct %v recon_total_time_diff:%vs, recon_getdata_time_diff:%vs, recon_repin_time_diff:%vs, recon_total_size_diff:%v, recon_data_size_diff:%v, recon_repin_size_diff:%v, recon_total_rate_diff:%v, recon_data_rate_diff:%v, recon_repin_rate_diff:%v\n", root, total, retrieveSeconds, reconSeconds, sum, sum-repin, repin, float64(sum)/total, float64(sum-repin)/retrieveSeconds, float64(repin)/reconSeconds)
 	return rootPin, nil
 }
 
