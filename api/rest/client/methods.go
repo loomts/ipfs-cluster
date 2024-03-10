@@ -677,8 +677,8 @@ func (c *defaultClient) Add(
 			// if data shards' size larger than 1GB, means that need 400MB to RS encode, split it.
 			params.ShardSize /= 2
 		}
-		// align
-		params.ShardSize = (params.ShardSize + 256*1024 - 1) / (256 * 1024) * 256 * 1024
+		// align and add more 128KB for each shard
+		params.ShardSize = (params.ShardSize+2*256*1024-1)/(256*1024)*256*1024 + 128*1024
 	}
 
 	sliceFile := files.NewSliceDirectory(addFiles)
