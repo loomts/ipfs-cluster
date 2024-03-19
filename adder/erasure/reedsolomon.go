@@ -66,13 +66,15 @@ type ReedSolomon struct {
 	shardSize     int
 	parityLen     int
 	dataLen       int
+	totalSize     uint64
 	parityCh      chan Shard
 	blockCh       chan StatBlock
 	receAllData   bool
+	rsTime        time.Duration
 }
 
 func New(ctx context.Context, d int, p int, shardSize int) *ReedSolomon {
-	rss, _ := rs.New(d, p)
+	rss, _ := rs.New(d, p, rs.WithAutoGoroutines(shardSize))
 	r := &ReedSolomon{
 		mu:            sync.Mutex{},
 		rs:            rss,
@@ -91,6 +93,7 @@ func New(ctx context.Context, d int, p int, shardSize int) *ReedSolomon {
 		parityCh:      make(chan Shard, 1024),
 		blockCh:       make(chan StatBlock, 1024),
 		receAllData:   false,
+		rsTime:        time.Duration(0),
 	}
 	if shardSize != 0 {
 		go r.handleBlock()
@@ -102,6 +105,7 @@ func New(ctx context.Context, d int, p int, shardSize int) *ReedSolomon {
 func (r *ReedSolomon) handleBlock() {
 	for {
 		sb := <-r.blockCh
+		st := time.Now()
 		switch sb.Stat {
 		case DefaultBlock:
 			r.mu.Lock()
@@ -127,6 +131,7 @@ func (r *ReedSolomon) handleBlock() {
 			r.mu.Lock()
 			// fill with 0 to alignL this data shard
 			r.dataShardSize[fmt.Sprintf("%d", r.dataLen)] = uint64(len(r.blocks[r.curShardI]))
+			r.totalSize += uint64(len(r.blocks[r.curShardI]))
 			r.dataLen += 1
 			r.batchCid[r.curShardI] = sb.Cid
 			r.curShardI, r.curShardJ = r.curShardI+1, 0
@@ -140,6 +145,7 @@ func (r *ReedSolomon) handleBlock() {
 			r.mu.Unlock()
 			return
 		}
+		r.rsTime += time.Since(st)
 	}
 }
 
@@ -165,6 +171,7 @@ func (r *ReedSolomon) EncodeL(isLast bool) {
 			Links:   r.batchCid,
 		}
 		r.parityLen += 1
+		r.totalSize += uint64(len(b))
 	}
 	r.blocks = newBlocks(r.dataShards, r.parityShards, r.shardSize)
 	if isLast {
@@ -219,6 +226,9 @@ func (r *ReedSolomon) GetParity() <-chan Shard {
 
 func (r *ReedSolomon) SendBlockTo() chan<- StatBlock {
 	return r.blockCh
+}
+func (r *ReedSolomon) GetTotalSize() uint64 {
+	return r.totalSize
 }
 
 // BatchRecon handle each batch, only nil shard need to reconstruct
@@ -323,4 +333,8 @@ func (r *ReedSolomon) batchAlignAndCheck(batchDataShards int, dVects [][]byte, p
 		}
 	}
 	return needRepin, nil
+}
+
+func (r *ReedSolomon) GetRSTime() time.Duration {
+	return r.rsTime
 }

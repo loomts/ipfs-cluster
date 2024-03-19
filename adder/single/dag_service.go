@@ -147,7 +147,6 @@ func (dgs *DAGService) CloseI(i int) {
 
 // Finalize pins the last Cid added to this DAGService.
 func (dgs *DAGService) Finalize(ctx context.Context, root api.Cid) (api.Cid, error) {
-	logger.Errorf("------- %s size: %v", root, dgs.total)
 	dgs.total = 0
 	// Close current blocks channel
 	dgs.CloseI(dgs.fileIdx)

@@ -678,7 +678,7 @@ func (c *defaultClient) Add(
 			params.ShardSize /= 2
 		}
 		// align
-		params.ShardSize = (params.ShardSize + 256*1024 - 1) / (256 * 1024) * 256 * 1024
+		params.ShardSize = (params.ShardSize+256*1024-1)/(256*1024)*256*1024 + 128*1024
 	}
 
 	sliceFile := files.NewSliceDirectory(addFiles)
