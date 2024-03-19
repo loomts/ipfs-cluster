@@ -2301,7 +2301,7 @@ func (c *Cluster) ECGet(ctx context.Context, ci api.Cid, out chan<- []byte) erro
 	ctx, span := trace.StartSpan(ctx, "cluster/ECGet")
 	defer span.End()
 	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
-	pin, err := c.ECReConstruct(ctx, ci, dgs)
+	pin, _, err := c.ECReConstruct(ctx, ci, dgs)
 	if err != nil {
 		close(out)
 		return fmt.Errorf("error reconstructing file: %s", err)
@@ -2330,11 +2330,13 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 			wg.Add(1)
 			go func(ci api.Cid) {
 				defer wg.Done()
-				pin, err := c.ECReConstruct(ctx, ci, dgs)
-				out <- pin
+				pin, repinned, err := c.ECReConstruct(ctx, ci, dgs)
 				if err != nil {
 					logger.Errorf("ReConstruct %s error:%s", ci, err)
 					return
+				}
+				if repinned {
+					out <- pin
 				}
 			}(*p.Reference)
 		}
@@ -2384,26 +2386,27 @@ func ECExtraMetaData(metadata map[string]string) (map[int][]sharding.ECBlockMeta
 	return bmeta, dss, nil
 }
 
-func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSession) (api.Pin, error) {
+func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSession) (api.Pin, bool, error) {
 	// try to get shards and reconstruct
 	rootPin, err := c.PinGet(ctx, root)
 	if err != nil {
-		return api.Pin{}, fmt.Errorf("cid was not pinned: %s", err)
+		return api.Pin{}, false, fmt.Errorf("cid was not pinned: %s", err)
 	}
 	if rootPin.Type != api.MetaType {
-		return api.Pin{}, fmt.Errorf("cid not MetaPin type")
+		return api.Pin{}, false, fmt.Errorf("cid not MetaPin type")
 	}
 	clusterPin, err := c.PinGet(ctx, *rootPin.Reference)
 	if err != nil {
-		return api.Pin{}, err
+		return api.Pin{}, false, err
 	}
 	blockMeta, dShardSize, err := ECExtraMetaData(clusterPin.Metadata)
 	if err != nil {
-		return api.Pin{}, fmt.Errorf("cannot extra erasure coding metadata: %s", err)
+		return api.Pin{}, false, fmt.Errorf("cannot extra erasure coding metadata: %s", err)
 	}
 	d, p := clusterPin.DataShards, clusterPin.ParityShards
 	batchNum := (len(dShardSize) + d - 1) / d
 	batchCh := make(chan ec.Batch, batchNum)
+	repinShards := 0
 	var errs error
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -2411,6 +2414,7 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 		defer wg.Done()
 		for i := 0; i < batchNum; i++ {
 			batch := <-batchCh
+			repinShards += len(batch.NeedRepin)
 			err := c.ECRePinBatch(ctx, batch, clusterPin, blockMeta, dShardSize[batch.Idx*d:min((batch.Idx+1)*d, len(dShardSize))])
 			errs = errors.Join(errs, err)
 		}
@@ -2418,10 +2422,10 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 	err = dgs.ECGetShard2Batch(ctx, clusterPin.Cid, d, p, dShardSize, batchCh)
 	errs = errors.Join(errs, err)
 	if errs != nil {
-		return api.Pin{}, errs
+		return api.Pin{}, false, errs
 	}
 	wg.Wait()
-	return rootPin, nil
+	return rootPin, repinShards > 0, nil
 }
 
 // drop previous pin's allocation, cover by new allocation
