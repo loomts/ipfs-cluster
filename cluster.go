@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/ipfs-cluster/ipfs-cluster/adder"
 	ec "github.com/ipfs-cluster/ipfs-cluster/adder/erasure"
 	"github.com/ipfs-cluster/ipfs-cluster/adder/sharding"
@@ -441,6 +442,7 @@ func (c *Cluster) logPingMetric(ctx context.Context, pid peer.ID) error {
 		Valid: true,
 	}
 	m.SetTTL(c.config.MonitorPingInterval * 2)
+	fmt.Printf("logping metric, peer:%v, expire:%v\n", m.Peer, humanize.Time(time.Unix(0, m.Expire)))
 	return c.monitor.LogMetric(ctx, m)
 }
 

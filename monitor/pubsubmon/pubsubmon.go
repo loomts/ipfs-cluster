@@ -5,17 +5,19 @@ package pubsubmon
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"time"
 
 	"sync"
 
+	"github.com/dustin/go-humanize"
 	"github.com/ipfs-cluster/ipfs-cluster/api"
 	"github.com/ipfs-cluster/ipfs-cluster/monitor/metrics"
 
 	logging "github.com/ipfs/go-log/v2"
-	peer "github.com/libp2p/go-libp2p/core/peer"
 	rpc "github.com/libp2p/go-libp2p-gorpc"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	peer "github.com/libp2p/go-libp2p/core/peer"
 	gocodec "github.com/ugorji/go/codec"
 
 	"go.opencensus.io/trace"
@@ -159,7 +161,7 @@ func (mon *Monitor) logFromPubsub() {
 			}
 
 			debug("received", metric)
-
+			fmt.Printf("received metric, peer:%v, expire:%v\n", metric.Peer, humanize.Time(time.Unix(0, metric.Expire)))
 			err = mon.LogMetric(ctx, metric)
 			if err != nil {
 				logger.Error(err)
@@ -251,6 +253,10 @@ func (mon *Monitor) LatestMetrics(ctx context.Context, name string) []api.Metric
 	latest := mon.metrics.LatestValid(name)
 
 	if mon.peers == nil {
+		for _, m := range latest {
+			expDate := time.Unix(0, m.Expire)
+			fmt.Printf("name:%v-%v, receive:%v, now: %v, expData:%vs\n", m.Name, m.Peer, humanize.Time(time.Unix(0, m.ReceivedAt)), humanize.Time(time.Now()), humanize.Time(expDate))
+		}
 		return latest
 	}
 
