@@ -1607,6 +1607,7 @@ func (c *Cluster) pin(
 func (c *Cluster) Unpin(ctx context.Context, h api.Cid) (api.Pin, error) {
 	ctx, span := trace.StartSpan(ctx, "cluster/Unpin")
 	defer span.End()
+	st := time.Now()
 
 	if c.config.FollowerMode {
 		return api.Pin{}, errFollowerMode
@@ -1617,7 +1618,9 @@ func (c *Cluster) Unpin(ctx context.Context, h api.Cid) (api.Pin, error) {
 	if err != nil {
 		return api.Pin{}, err
 	}
-
+	defer func() {
+		logger.Errorf("ECTEST Unpin %s use %v", pin.Name, time.Since(st))
+	}()
 	switch pin.Type {
 	case api.DataType:
 		return pin, c.consensus.LogUnpin(ctx, pin)
@@ -2326,7 +2329,6 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 	if err != nil {
 		logger.Errorf("cannot list pins: %s", err)
 	}
-	dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
 	wg := sync.WaitGroup{}
 	sortPins := make([]api.Pin, 0)
 	for p := range pins {
@@ -2349,6 +2351,7 @@ func (c *Cluster) ECRecovery(ctx context.Context, out chan<- api.Pin) error {
 		wg.Add(1)
 		func(ci api.Cid) {
 			defer wg.Done()
+			dgs := NewDagGetter(ctx, c.ipfs.BlockGet)
 			pin, repinned, err := c.ECReConstruct(ctx, ci, dgs)
 			if err != nil {
 				logger.Errorf("ReConstruct %s error:%s", ci, err)
@@ -2446,7 +2449,7 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 			errs = errors.Join(errs, err)
 		}
 	}()
-	err = dgs.ECGetShard2Batch(ctx, clusterPin.Cid, d, p, dShardSize, batchCh)
+	err = dgs.ECGetShard2Batch(ctx, rootPin.Name, clusterPin.Cid, d, p, dShardSize, batchCh)
 	errs = errors.Join(errs, err)
 	if errs != nil {
 		return api.Pin{}, false, errs
@@ -2454,7 +2457,7 @@ func (c *Cluster) ECReConstruct(ctx context.Context, root api.Cid, dgs *dagSessi
 	wg.Wait()
 	total := float64(time.Since(start).Seconds())
 	reconSeconds := total - retrieveSeconds
-	logger.Errorf("==================== ECReConstruct %v recon_total_time_diff:%vs, recon_getdata_time_diff:%vs, recon_repin_time_diff:%vs, recon_total_size_diff:%v, recon_data_size_diff:%v, recon_repin_size_diff:%v, recon_total_rate_diff:%v, recon_data_rate_diff:%v, recon_repin_rate_diff:%v\n", root, total, retrieveSeconds, reconSeconds, sum, sum-repin, repin, float64(sum)/total, float64(sum-repin)/retrieveSeconds, float64(repin)/reconSeconds)
+	logger.Errorf("ECTEST ECReConstruct %v recon_total_time_diff:%vs, recon_getdata_time_diff:%vs, recon_repin_time_diff:%vs, recon_total_size_diff:%v, recon_data_size_diff:%v, recon_repin_size_diff:%v, recon_total_rate_diff:%v, recon_data_rate_diff:%v, recon_repin_rate_diff:%v\n", rootPin.Name, total, retrieveSeconds, reconSeconds, sum, sum-repin, repin, float64(sum)/total, float64(sum-repin)/retrieveSeconds, float64(repin)/reconSeconds)
 	return rootPin, repin > 0, nil
 }
 

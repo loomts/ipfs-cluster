@@ -206,7 +206,7 @@ func (ds *dagSession) ECGetBatches(ctx context.Context, links []*format.Link, ba
 	return errs, ec.Batch{Idx: batchIdx, Shards: vects}
 }
 
-func (ds *dagSession) ECGetShard2Batch(ctx context.Context, ci api.Cid, d, p int, dShardSize []int, out chan<- ec.Batch) error {
+func (ds *dagSession) ECGetShard2Batch(ctx context.Context,fileName string, ci api.Cid, d, p int, dShardSize []int, out chan<- ec.Batch) error {
 	timeout := 5 * time.Minute
 	links, err := ds.ResolveCborLinks(ctx, ci) // get sorted shards
 	if err != nil {
@@ -246,7 +246,7 @@ func (ds *dagSession) ECGetShard2Batch(ctx context.Context, ci api.Cid, d, p int
 			}()
 
 			go func() {
-				err, batch := ec.New(ctx, d, p, 0).BatchRecon(ctx, i, batchDataShardSize, shardCh)
+				err, batch := ec.New(ctx, d, p, 0).BatchRecon(ctx,fileName, i, batchDataShardSize, shardCh)
 				if err != nil {
 					logger.Errorf("recon %dbatch shards fail:%v", i, err)
 					return

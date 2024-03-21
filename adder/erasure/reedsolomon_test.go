@@ -125,7 +125,7 @@ func SplitAndRecon(t *testing.T, dgs ipld.DAGService, file files.Node, shardSize
 				shardCh <- Shard{Idx: j - pl + batchDataShards, RawData: parityVects[j]}
 			}
 		}(i)
-		err, batch := rs.BatchRecon(context.Background(), i, dShardSize[dl:dr], shardCh)
+		err, batch := rs.BatchRecon(context.Background(),"", i, dShardSize[dl:dr], shardCh)
 		assert.Nil(t, err)
 		assert.Equal(t, preData0, batch.Shards[0])
 	}

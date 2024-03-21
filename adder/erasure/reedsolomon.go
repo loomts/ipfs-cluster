@@ -232,7 +232,7 @@ func (r *ReedSolomon) GetTotalSize() uint64 {
 }
 
 // BatchRecon handle each batch, only nil shard need to reconstruct
-func (r *ReedSolomon) BatchRecon(ctx context.Context, batchIdx int, batchDataShardSize []int, shardCh <-chan Shard) (error, Batch) {
+func (r *ReedSolomon) BatchRecon(ctx context.Context, fileName string, batchIdx int, batchDataShardSize []int, shardCh <-chan Shard) (error, Batch) {
 	receShards := 0
 	batchDataShards := len(batchDataShardSize)
 	batch := make([][]byte, r.dataShards+r.parityShards)
@@ -283,7 +283,7 @@ func (r *ReedSolomon) BatchRecon(ctx context.Context, batchIdx int, batchDataSha
 						vects[j] = nil
 					}
 				}
-				log.Errorf("1111111111111111batch %d rs_recon_time_diff:%v, rs_recon_size_diff:%v, rs_recon_rate_diff:%f\n", batchIdx, time.Since(start), sum, float64(sum)/float64(time.Since(start).Seconds()))
+				log.Errorf("ECTEST BatchRecon %s-%d rs_recon_time_diff:%v, rs_recon_size_diff:%v, rs_recon_rate_diff:%f\n", fileName, batchIdx, time.Since(start), sum, float64(sum)/float64(time.Since(start).Seconds()))
 				return nil, Batch{Idx: batchIdx, NeedRepin: needRepin, Shards: vects}
 			}
 		}

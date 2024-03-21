@@ -158,7 +158,7 @@ func (dgs *DAGService) Finalize(ctx context.Context, dataRoot api.Cid) (api.Cid,
 	clusterDAGPin.Reference = &dataRoot
 	dataShardSize := dgs.rs.GetDataShardSize()
 	totalSize := dgs.rs.GetTotalSize()
-	logger.Errorf("ECTEST %v ShardSize:%v, DataShards:%v, ParityShards:%v, RSTime:%v, OtherTime:%v, TotalDataSize:%d, TotalDataAndParitySize:%d, RSRate:%v, ToTalDataRate:%v", dataRoot.Cid, dgs.addParams.ShardSize, len(dataShardSize), len(shardMeta)-len(dataShardSize), dgs.rs.GetRSTime(), time.Since(dgs.startTime)-dgs.rs.GetRSTime(), dgs.totalSize,totalSize, float64(dgs.totalSize)/float64(dgs.rs.GetRSTime().Seconds()), float64(dgs.totalSize)/float64(time.Since(dgs.startTime).Seconds()))
+	logger.Errorf("ECTEST ADD %s %v ShardSize:%v, DataShards:%v, ParityShards:%v, RSTime:%v, OtherTime:%v, TotalDataSize:%d, TotalDataAndParitySize:%d, RSRate:%v, ToTalDataRate:%v", dgs.addParams.Name, dataRoot.Cid, dgs.addParams.ShardSize, len(dataShardSize), len(shardMeta)-len(dataShardSize), dgs.rs.GetRSTime(), time.Since(dgs.startTime)-dgs.rs.GetRSTime(), dgs.totalSize, totalSize, float64(dgs.totalSize)/float64(dgs.rs.GetRSTime().Seconds()), float64(dgs.totalSize)/float64(time.Since(dgs.startTime).Seconds()))
 	// record data shard size to metadata, enable erasure module know data size and the number.
 	for i, size := range dataShardSize {
 		clusterDAGPin.Metadata[i] = fmt.Sprintf("%d", size)
