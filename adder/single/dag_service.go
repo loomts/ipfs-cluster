@@ -93,8 +93,12 @@ func (dgs *DAGService) Add(ctx context.Context, node ipld.Node) error {
 		dgs.blocks = append(dgs.blocks, make(chan api.NodeWithMeta, 256))
 		dgs.closeBlocksOnce = append(dgs.closeBlocksOnce, sync.Once{})
 		if dgs.addParams.Erasure {
-			// this sets allocations as single peer
-			allocation, err := adder.DefaultECAllocate(ctx, dgs.rpcClient, dgs.addParams.Name[:strings.Index(dgs.addParams.Name, "-")], dgs.addParams.DataShards, dgs.addParams.ParityShards, dgs.fileIdx, false)
+			// sets allocations to one peer
+			// parse fileName-parity-shard-x to fileName
+			fileName := dgs.addParams.Name[:strings.LastIndex(dgs.addParams.Name, "-")]
+			fileName = fileName[:strings.LastIndex(fileName, "-")]
+			fileName = fileName[:strings.LastIndex(fileName, "-")]
+			allocation, err := adder.DefaultECAllocate(ctx, dgs.rpcClient, fileName, dgs.addParams.DataShards, dgs.addParams.ParityShards, dgs.fileIdx, false)
 			if err != nil {
 				return fmt.Errorf("parity shard allocation %d: %s", dgs.fileIdx, err)
 			}
